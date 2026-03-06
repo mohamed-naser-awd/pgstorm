@@ -57,6 +57,8 @@ class QuerySet(Generic[T]):
     _distinct: bool
     _exclude_columns: list[str]
     _joins: list[JoinExpression]
+    _group_by: list[Any]
+    _having: list[Expression | NotExpression | "AndExpression" | "OrExpression"]
     is_cte: bool
     is_subquery: bool
     cte_name: str | None
@@ -76,6 +78,8 @@ class QuerySet(Generic[T]):
         self._annotations = {}
         self._aliases = {}
         self._joins = []
+        self._group_by = []
+        self._having = []
         self.is_cte = False
         self.is_subquery = False
         self.cte_name = None
@@ -89,8 +93,9 @@ class QuerySet(Generic[T]):
         and any explicit joins without an explicit rhs_schema will
         default to this same schema.
         """
-        self._schema = schema
-        return self
+        qs = self.copy()
+        qs._schema = schema
+        return qs
 
     def _fetch(self) -> list[T]:
         """Load results from the database via the engine from context."""
@@ -101,16 +106,16 @@ class QuerySet(Generic[T]):
             raise RuntimeError(
                 "No engine set. Call create_engine() or engine.set(engine) before using querysets."
             )
-        if eng.is_async:
-            raise RuntimeError(
-                "Cannot iterate synchronously with async engine. Use await queryset.fetch() or async for."
-            )
+
         compiled = self.compiled()
         rows = eng.execute(compiled)
         return self._rows_to_instances(rows)
 
-    def _rows_to_instances(self, rows: list[dict[str, Any]]) -> list[T]:
-        """Map row dicts to model instances. When joins with rhs_model exist, hydrate both main and joined objects."""
+    def _rows_to_instances_sync(self, rows: list[dict[str, Any]]) -> list[T]:
+        """Map row dicts to model instances. When joins with rhs_model exist, hydrate both main and joined objects.
+        When the queryset has aggregates (with or without group_by), return raw row dicts instead of model instances."""
+        if getattr(self, "_aggregates", []):
+            return rows  # type: ignore[return-value]
         from pgstorm.columns.base import RelationField
         from pgstorm.queryset.parser import (
             _find_relation_to_model,
@@ -121,7 +126,8 @@ class QuerySet(Generic[T]):
         model = self.model
         attr_names = {attr for attr, _ in _iter_model_columns(model)}
         annotation_names = set(getattr(self, "_annotations", {}).keys())
-        settable = attr_names | annotation_names
+        aggregate_aliases = {alias for _, alias in getattr(self, "_aggregates", [])}
+        settable = attr_names | annotation_names | aggregate_aliases
 
         # Map DB column names to attr names (e.g. user_id -> user for FK)
         db_col_to_attr: dict[str, str] = {}
@@ -173,6 +179,29 @@ class QuerySet(Generic[T]):
                         setattr(rhs_obj, f"_pgstorm_value_{reverse_name}", obj)
             result.append(obj)
         return result
+
+    @overload
+    def _rows_to_instances(self, rows: list[dict[str, Any]]) -> list[T]: ...
+    @overload
+    def _rows_to_instances(
+        self, rows: Awaitable[list[dict[str, Any]]]
+    ) -> Awaitable[list[T]]: ...
+    def _rows_to_instances(
+        self, rows: list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]
+    ) -> list[T] | Awaitable[list[T]]:
+        """
+        Map row dicts to model instances. Supports both sync and async:
+        - rows: list -> returns list[T]
+        - rows: Awaitable[list] -> returns Awaitable[list[T]] (use await)
+        """
+        if hasattr(rows, "__await__"):
+
+            async def _run() -> list[T]:
+                resolved = await rows
+                return self._rows_to_instances_sync(resolved)
+
+            return _run()
+        return self._rows_to_instances_sync(rows)
 
     def _execute(self, compiled: "CompiledQuery", then: Any) -> Any:
         """
@@ -233,82 +262,217 @@ class QuerySet(Generic[T]):
         for item in results:
             yield item
 
-    def __getitem__(self, index: int) -> T:
-        return self._ensure_fetched()[index]
+    @overload
+    def __getitem__(self, index: int) -> T: ...
+    @overload
+    def __getitem__(self, index: int) -> Awaitable[T]: ...
+    def __getitem__(self, index: int) -> T | Awaitable[T]:
+        if self._result_cache is not None:
+            return self._result_cache[index]
+        def then(rows: list[dict[str, Any]]) -> T:
+            instances = self._rows_to_instances(rows)
+            self._result_cache = instances
+            return instances[index]
+        return self._execute(self.compiled(), then)
 
-    def __len__(self) -> int:
-        return len(self._ensure_fetched())
+    @overload
+    def __len__(self) -> int: ...
+    @overload
+    def __len__(self) -> Awaitable[int]: ...
+    def __len__(self) -> int | Awaitable[int]:
+        if self._result_cache is not None:
+            return len(self._result_cache)
+        def then(rows: list[dict[str, Any]]) -> int:
+            instances = self._rows_to_instances(rows)
+            self._result_cache = instances
+            return len(instances)
+        return self._execute(self.compiled(), then)
 
     def as_cte(self, name: str = None) -> Self:
-        self.is_cte = True
-        self.cte_name = name
-        return self
+        qs = self.copy()
+        qs.is_cte = True
+        qs.cte_name = name
+        return qs
 
     def all(self) -> Self:
-        return self
+        return self.copy()
+
+    def copy(self) -> Self:
+        """Return a copy of this queryset. Modifications to the copy do not affect the original."""
+        qs = type(self)(self.model)
+        qs._schema = self._schema
+        qs._filters = list(self._filters)
+        qs._order_by = list(self._order_by)
+        qs._limit = self._limit
+        qs._offset = self._offset
+        qs._columns = list(self._columns)
+        qs._aggregates = list(self._aggregates)
+        qs._annotations = dict(self._annotations)
+        qs._aliases = dict(self._aliases)
+        qs._distinct = self._distinct
+        qs._exclude_columns = list(self._exclude_columns)
+        qs._joins = list(self._joins)
+        qs._group_by = list(self._group_by)
+        qs._having = list(self._having)
+        qs.is_cte = self.is_cte
+        qs.is_subquery = self.is_subquery
+        qs.cte_name = self.cte_name
+        qs._result_cache = None
+        return qs
 
     def filter(self, *args: Expression | NotExpression | Q) -> Self:
         from pgstorm.functions.expression import _to_expression
 
+        qs = self.copy()
         for arg in args:
             expr = _to_expression(arg) if isinstance(arg, Q) else arg
-            self._filters.append(expr)
-        return self
+            qs._filters.append(expr)
+        return qs
 
     def exclude(self, *args: Expression) -> Self:
         return self.filter(*(NotExpression(e) for e in args))
 
     def order_by(self, *args: Expression) -> Self:
-        self._order_by.extend(args)
-        return self
+        qs = self.copy()
+        qs._order_by.extend(args)
+        return qs
 
     def limit(self, limit: int) -> Self:
-        self._limit = limit
-        return self
+        qs = self.copy()
+        qs._limit = limit
+        return qs
 
     def offset(self, offset: int) -> Self:
-        self._offset = offset
-        return self
+        qs = self.copy()
+        qs._offset = offset
+        return qs
 
     def defer(self, *args: str) -> Self:
-        self._exclude_columns.extend(args)
-        return self
+        qs = self.copy()
+        qs._exclude_columns.extend(args)
+        return qs
 
     def columns(self, *args: str) -> Self:
-        self._columns.extend(args)
-        return self
+        qs = self.copy()
+        qs._columns.extend(args)
+        return qs
 
+    @overload
     def aggregate(
         self,
         *args: "Aggregate",
+        having: Expression | NotExpression | Q | None = None,
         **kwargs: "Aggregate",
-    ) -> Self:
+    ) -> dict[str, Any]: ...
+    @overload
+    def aggregate(
+        self,
+        *args: "Aggregate",
+        having: Expression | NotExpression | Q | None = None,
+        **kwargs: "Aggregate",
+    ) -> Awaitable[dict[str, Any]]: ...
+    @overload
+    def aggregate(
+        self,
+        *args: "Aggregate",
+        having: Expression | NotExpression | Q | None = None,
+        **kwargs: "Aggregate",
+    ) -> list[dict[str, Any]]: ...
+    @overload
+    def aggregate(
+        self,
+        *args: "Aggregate",
+        having: Expression | NotExpression | Q | None = None,
+        **kwargs: "Aggregate",
+    ) -> Awaitable[list[dict[str, Any]]]: ...
+    def aggregate(
+        self,
+        *args: "Aggregate",
+        having: Expression | NotExpression | Q | None = None,
+        **kwargs: "Aggregate",
+    ) -> dict[str, Any] | list[dict[str, Any]] | Awaitable[dict[str, Any]] | Awaitable[list[dict[str, Any]]]:
         """
-        Add aggregate functions to the SELECT clause.
+        Execute aggregate functions and return results immediately.
 
-        - Positional args: alias = col_name_function_name (e.g. Min(User.age) -> age_min)
-        - Keyword args: alias = key (e.g. total=Sum(User.price) -> total)
+        - Without group_by: returns a single dict (e.g. {"total": 123, "count": 5})
+        - With group_by: returns a list of dicts (one per group)
+
+        Positional args get auto aliases (e.g. Min(User.age) -> age_min).
+        Keyword args use the key as alias (e.g. total=Sum(User.price) -> total).
+
+        Use having= to filter on aggregate results (e.g. having=F("total") > 100).
+
+        With sync engine returns dict | list[dict]; with async returns Awaitable — use await.
         """
         from pgstorm.functions.aggregate import Aggregate, _default_alias_for_aggregate
+        from pgstorm.functions.expression import _to_expression
 
+        if not args and not kwargs:
+            raise ValueError("aggregate() requires at least one aggregate (e.g. Count(), Sum(col))")
+
+        qs = self.copy()
         for agg in args:
             if not isinstance(agg, Aggregate):
                 raise TypeError(f"Expected Aggregate, got {type(agg).__name__}")
             alias = _default_alias_for_aggregate(agg)
-            self._aggregates.append((agg, alias))
+            qs._aggregates.append((agg, alias))
         for key, agg in kwargs.items():
             if not isinstance(agg, Aggregate):
                 raise TypeError(f"Expected Aggregate, got {type(agg).__name__}")
-            self._aggregates.append((agg, key))
-        return self
+            qs._aggregates.append((agg, key))
+        if having is not None:
+            expr = _to_expression(having) if isinstance(having, Q) else having
+            qs._having.append(expr)
+
+        has_group_by = bool(getattr(qs, "_group_by", []))
+
+        def then(rows: list[dict[str, Any]]) -> dict[str, Any] | list[dict[str, Any]]:
+            if has_group_by:
+                return rows
+            return rows[0] if rows else {}
+
+        return qs._execute(qs.compiled(), then)
+
+    def group_by(self, *args: Any) -> QuerySet[dict]:
+        """
+        Add GROUP BY columns.
+
+        Accepts BoundColumnRef (e.g. User.department) or raw column name strings.
+        When used with aggregate(), the grouped columns are automatically included
+        in the SELECT list alongside the aggregate expressions.
+
+        Example:
+            Product.objects.group_by(Product.category).aggregate(total=Sum(Product.price))
+            -> SELECT "product"."category", SUM("product"."price") AS "total"
+               FROM "product" GROUP BY "product"."category"
+        """
+        qs = self.copy()
+        qs._group_by.extend(args)
+        return qs
+
+    def having(self, *args: Expression | NotExpression | Q) -> Self:
+        """
+        Add HAVING conditions (filters applied after GROUP BY).
+
+        Chain with annotate(): .group_by(...).annotate(total=Sum(...)).having(F("total") > 100)
+        For aggregate(), use the having= parameter: .aggregate(total=Sum(...), having=F("total") > 100)
+        """
+        from pgstorm.functions.expression import _to_expression
+
+        qs = self.copy()
+        for arg in args:
+            expr = _to_expression(arg) if isinstance(arg, Q) else arg
+            qs._having.append(expr)
+        return qs
 
     def annotate(self, **kwargs: Any) -> Self:
         """
         Add computed expressions to the SELECT clause. Results include these values.
         Example: Model.objects.annotate(full_name=Concat(User.first_name, " ", User.last_name))
         """
-        self._annotations.update(kwargs)
-        return self
+        qs = self.copy()
+        qs._annotations.update(kwargs)
+        return qs
 
     def alias(self, **kwargs: Any) -> Self:
         """
@@ -316,12 +480,14 @@ class QuerySet(Generic[T]):
         Example: Model.objects.alias(foo=Concat(...)).filter(F("foo").ilike("%x%"))
         -> WHERE CONCAT(...) ILIKE '%x%'
         """
-        self._aliases.update(kwargs)
-        return self
+        qs = self.copy()
+        qs._aliases.update(kwargs)
+        return qs
 
     def distinct(self, *args: str) -> Self:
-        self._distinct = True
-        return self
+        qs = self.copy()
+        qs._distinct = True
+        return qs
 
     def get(self, *filters: Expression | NotExpression) -> T:
         return self.filter(*filters).limit(1).all()[0]
@@ -353,7 +519,8 @@ class QuerySet(Generic[T]):
         """Return the number of rows matching this queryset. With async engine use await."""
         from pgstorm.functions.aggregate import Count
 
-        qs = self.aggregate(count=Count())
+        qs = self.copy()
+        qs._aggregates.append((Count(), "count"))
         return qs._execute(qs.compiled(), lambda rows: rows[0]["count"] if rows else 0)
 
     @overload
@@ -532,22 +699,23 @@ class QuerySet(Generic[T]):
     ) -> Self:
         from pgstorm.queryset.parser import _table_name
 
-        lhs_table = _table_name(self.model)
+        qs = self.copy()
+        lhs_table = _table_name(qs.model)
         if isinstance(join_with, type) and issubclass(join_with, BaseModel):
             rhs_table = _table_name(join_with)
         else:
             raise TypeError("join_with must be a model class")
         # If no explicit rhs_schema is provided, default to this queryset's schema.
-        effective_rhs_schema = rhs_schema if rhs_schema is not None else self._schema
-        self._joins.append(
+        effective_rhs_schema = rhs_schema if rhs_schema is not None else qs._schema
+        qs._joins.append(
             JoinExpression(
                 lhs_table,
                 rhs_table,
                 on,
                 join_type,
                 rhs_model=join_with,
-                lhs_schema=self._schema,
+                lhs_schema=qs._schema,
                 rhs_schema=effective_rhs_schema,
             )
         )
-        return self
+        return qs

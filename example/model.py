@@ -12,6 +12,7 @@ class User(BaseModel):
 class UserProfile(BaseModel):
     __table__ = "user_profile"
     user: types.ForeignKey[User, types.ON_DELETE_CASCADE]
+    id: types.BigSerial[types.IS_PRIMARY_KEY_FIELD]
 
 
 class AuditLog(BaseModel):

@@ -81,12 +81,19 @@ User.objects.distinct()              # SELECT DISTINCT
 
 ## Aggregates
 
+`aggregate()` executes immediately and returns data (dict or list[dict]), not a queryset.
+
 ```python
 from pgstorm import Min, Max, Count, Sum, Avg
 
 Product.objects.aggregate(Min(Product.price), Max(Product.price))
+# -> {"price_min": 10, "price_max": 99}
 Product.objects.aggregate(total=Sum(Product.price), cnt=Count())
+# -> {"total": 1000, "cnt": 42}
 Product.objects.aggregate(row_count=Count())  # COUNT(*)
+# -> {"row_count": 42}
+Product.objects.group_by(Product.category).aggregate(total=Sum(Product.price))
+# -> [{"category": "A", "total": 100}, {"category": "B", "total": 200}]
 ```
 
 ## Annotate

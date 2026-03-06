@@ -188,12 +188,15 @@ Set the database schema for the main table and default for joins.
 
 ### Aggregates & annotations
 
-#### `aggregate(*args, **kwargs) -> Self`
+#### `aggregate(*args, having=..., **kwargs) -> dict | list[dict] | Awaitable`
 
-Add aggregate functions to `SELECT`. Positional args get auto aliases (e.g. `Min(User.price)` → `price_min`). Keyword args use the key as alias.
+Execute aggregate functions and return results immediately. Without `group_by`: returns a single dict. With `group_by`: returns a list of dicts. Use `having=` to filter on aggregate results.
 
 ```python
 Product.objects.aggregate(Min(Product.price), total=Sum(Product.price), cnt=Count())
+# -> {"price_min": 10, "total": 100, "cnt": 5}
+Product.objects.group_by(Product.category).aggregate(total=Sum(Product.price))
+# -> [{"category": "A", "total": 100}, {"category": "B", "total": 200}]
 ```
 
 ---

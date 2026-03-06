@@ -120,6 +120,38 @@ def _compile_aggregate(
     return func_sql + sql.SQL("(") + inner + sql.SQL(") AS ") + sql.Identifier(alias)
 
 
+def _compile_group_by_ref(
+    ref: Any,
+    table: str,
+    model: type[Any],
+) -> sql.Composable:
+    """Compile a single GROUP BY reference to a qualified SQL identifier."""
+    if isinstance(ref, BoundColumnRef):
+        col_name = _db_column_name(ref, ref.model)
+        tbl = _table_name(ref.model)
+        return sql.Identifier(tbl, col_name)
+    if isinstance(ref, Column):
+        col_name = _db_column_name(ref, model)
+        return sql.Identifier(table, col_name)
+    if isinstance(ref, str):
+        return sql.Identifier(table, ref)
+    col_name = _db_column_name(ref, model) or getattr(ref, "name", str(ref))
+    return sql.Identifier(table, col_name)
+
+
+def _compile_group_by_clause(
+    qs: "QuerySet[Any]",
+    table: str,
+    model: type[Any],
+) -> sql.Composable | None:
+    """Compile the GROUP BY clause. Returns None when there is nothing to group."""
+    group_by = getattr(qs, "_group_by", None)
+    if not group_by:
+        return None
+    parts = [_compile_group_by_ref(ref, table, model) for ref in group_by]
+    return sql.SQL(" GROUP BY ") + sql.SQL(", ").join(parts)
+
+
 def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = None) -> sql.Composable:
     """
     Build the SELECT column list for the queryset.
@@ -134,11 +166,16 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
     table = _table_name(model)
 
     aggregates = getattr(qs, "_aggregates", None)
-    if aggregates:
-        parts = [
-            _compile_aggregate(agg, alias, table, model)
-            for agg, alias in aggregates
-        ]
+    group_by_cols = getattr(qs, "_group_by", None)
+    if aggregates or group_by_cols:
+        # With GROUP BY, only return group-by columns and aggregate expressions
+        parts: list[sql.Composable] = []
+        if group_by_cols:
+            for ref in group_by_cols:
+                parts.append(_compile_group_by_ref(ref, table, model))
+        if aggregates:
+            for agg, alias in aggregates:
+                parts.append(_compile_aggregate(agg, alias, table, model))
         return sql.SQL(", ").join(parts)
 
     # Discover all columns by attribute name (never use SELECT *)
@@ -591,6 +628,20 @@ def _compile_subquery_sql(
         where_sql = sql.SQL(" AND ").join(where_fragments)
         parts.append(sql.SQL(" WHERE ") + where_sql)
 
+    group_by_sql = _compile_group_by_clause(qs, table, model)
+    if group_by_sql is not None:
+        parts.append(group_by_sql)
+
+    having_filters = getattr(qs, "_having", None)
+    if having_filters:
+        having_fragments: list[sql.Composable] = []
+        for h in having_filters:
+            frag = _compile_expression(h, table, params, model=model)
+            if isinstance(h, OrExpression):
+                frag = sql.SQL("(") + frag + sql.SQL(")")
+            having_fragments.append(frag)
+        parts.append(sql.SQL(" HAVING ") + sql.SQL(" AND ").join(having_fragments))
+
     if qs._order_by:
         order_parts = []
         for ob in qs._order_by:
@@ -777,6 +828,20 @@ def _compile_subquery_sql(
         where_sql = sql.SQL(" AND ").join(where_fragments)
         parts.append(sql.SQL(" WHERE ") + where_sql)
 
+    group_by_sql = _compile_group_by_clause(qs, table, model)
+    if group_by_sql is not None:
+        parts.append(group_by_sql)
+
+    having_filters = getattr(qs, "_having", None)
+    if having_filters:
+        having_fragments: list[sql.Composable] = []
+        for h in having_filters:
+            frag = _compile_expression(h, table, params, model=model)
+            if isinstance(h, OrExpression):
+                frag = sql.SQL("(") + frag + sql.SQL(")")
+            having_fragments.append(frag)
+        parts.append(sql.SQL(" HAVING ") + sql.SQL(" AND ").join(having_fragments))
+
     if qs._order_by:
         order_parts = []
         for ob in qs._order_by:
@@ -909,6 +974,20 @@ def _compile_subquery_sql(
             where_fragments.append(frag)
         parts.append(sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_fragments))
 
+    group_by_sql = _compile_group_by_clause(qs, table, model)
+    if group_by_sql is not None:
+        parts.append(group_by_sql)
+
+    having_filters = getattr(qs, "_having", None)
+    if having_filters:
+        having_fragments: list[sql.Composable] = []
+        for h in having_filters:
+            frag = _compile_expression(h, table, params, model=model)
+            if isinstance(h, OrExpression):
+                frag = sql.SQL("(") + frag + sql.SQL(")")
+            having_fragments.append(frag)
+        parts.append(sql.SQL(" HAVING ") + sql.SQL(" AND ").join(having_fragments))
+
     if qs._order_by:
         order_parts = []
         for ob in qs._order_by:
@@ -1033,6 +1112,31 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
 
         where_sql = sql.SQL(" AND ").join(where_fragments)
         query_parts.append(sql.SQL(" WHERE ") + where_sql)
+
+    # GROUP BY ...
+    group_by_sql = _compile_group_by_clause(qs, table, model)
+    if group_by_sql is not None:
+        query_parts.append(group_by_sql)
+
+    # HAVING ...
+    having_filters = getattr(qs, "_having", None)
+    if having_filters:
+        having_fragments: list[sql.Composable] = []
+        ann = getattr(qs, "_annotations", {}) or {}
+        al = getattr(qs, "_aliases", {}) or {}
+        agg_aliases: dict[str, Aggregate] = {}
+        for agg, alias in getattr(qs, "_aggregates", []) or []:
+            agg_aliases[alias] = agg
+        for h in having_filters:
+            frag = _compile_expression(
+                h, table, params, model=model,
+                annotations=ann, aliases=al,
+            )
+            if isinstance(h, OrExpression):
+                frag = sql.SQL("(") + frag + sql.SQL(")")
+            having_fragments.append(frag)
+        having_sql = sql.SQL(" AND ").join(having_fragments)
+        query_parts.append(sql.SQL(" HAVING ") + having_sql)
 
     # ORDER BY ...
     if qs._order_by:
