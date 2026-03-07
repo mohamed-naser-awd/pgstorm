@@ -13,7 +13,7 @@ A lightweight PostgreSQL query builder and mini-ORM for Python. Compose type-saf
 - **Aggregates** — `Min`, `Max`, `Count`, `Sum`, `Avg`
 - **Writes included** — `create`, `bulk_create`, `update`, `delete` (sync or `await` with async engines)
 - **Engine abstraction** — Sync (psycopg2, psycopg3) and async (psycopg3_async, asyncpg) interfaces
-- **Transactions** — `with engine.transaction():` or `async with engine.transaction():`
+- **Transactions** — `with pgstorm.transaction():` or `async with pgstorm.transaction():`
 - **Schema support** — `using_schema()` and per-join `rhs_schema`
 
 ## Requirements
@@ -181,13 +181,15 @@ users = await User.objects.filter(User.age > 18).fetch()
 ### Transactions
 
 ```python
+import pgstorm
+
 # Sync
-with engine.transaction():
+with pgstorm.transaction():
     # queries run in transaction
     pass
 
 # Async
-async with engine.transaction():
+async with pgstorm.transaction():
     await User.objects.all().fetch()
 ```
 

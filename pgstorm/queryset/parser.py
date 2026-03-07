@@ -134,6 +134,28 @@ def _attr_to_db_column_name(model: type[Any], attr_name: str) -> str:
     return attr_name
 
 
+def _get_join_key_from_instance(instance: Any, ref: BoundColumnRef) -> Any:
+    """
+    Get the value from an instance for use as a join key (e.g. for prefetch grouping).
+    For RelationField, resolves related object to its PK.
+    """
+    from pgstorm.models import BaseModel
+
+    attr_name = ref.attr_name or getattr(ref, "relation_attr", None)
+    if not attr_name:
+        return None
+    val = getattr(instance, f"_pgstorm_value_{attr_name}", None)
+    if not hasattr(instance, f"_pgstorm_value_{attr_name}"):
+        val = getattr(instance, attr_name, None)
+    if val is None:
+        return None
+    # Resolve related model to PK
+    if isinstance(val, BaseModel):
+        pk_attr = _model_primary_key_field(type(val))
+        return getattr(val, f"_pgstorm_value_{pk_attr}", None) or getattr(val, pk_attr, None)
+    return val
+
+
 def _compile_aggregate(
     agg: Aggregate,
     alias: str,
@@ -834,6 +856,29 @@ def _find_relation_to_model(main_model: type[Any], target_model: type[Any]) -> t
         if isinstance(attr_value, RelationField) and attr_value._target_model is target_model:
             fk_field = attr_value._fk_field or _model_primary_key_field(target_model)
             return (attr_name, fk_field)
+    return None
+
+
+def _find_relation_between(
+    main_model: type[Any], target_model: type[Any]
+) -> tuple[str, str, str, str | None] | None:
+    """
+    Find a direct FK relation between main_model and target_model (either direction).
+    Returns (main_attr, target_attr, direction, reverse_name) or None.
+    - direction: "main_to_target" = main has FK to target
+    - direction: "target_to_main" = target has FK to main
+    - reverse_name: attr name on main for the prefetched list (from target's RelationField)
+    """
+    rel = _find_relation_to_model(main_model, target_model)
+    if rel:
+        main_attr, target_fk_field = rel
+        return (main_attr, target_fk_field, "main_to_target", main_attr)
+    rel = _find_relation_to_model(target_model, main_model)
+    if rel:
+        target_attr, main_fk_field = rel
+        fd = getattr(target_model, target_attr, None)
+        reverse_name = getattr(fd, "_reverse_name", None) if isinstance(fd, RelationField) else None
+        return (main_fk_field, target_attr, "target_to_main", reverse_name)
     return None
 
 

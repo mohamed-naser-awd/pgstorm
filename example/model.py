@@ -15,6 +15,13 @@ class UserProfile(BaseModel):
     id: types.BigSerial[types.IS_PRIMARY_KEY_FIELD]
 
 
+class Order(BaseModel):
+    __table__ = "order"
+
+    id: types.BigSerial[types.IS_PRIMARY_KEY_FIELD]
+    user: types.ForeignKey[User]
+
+
 # Pre-defined queryset: inherits from User for columns, defines data via __queryset__
 class ActiveUsers(BaseView, User):
     __table__ = "active_users"

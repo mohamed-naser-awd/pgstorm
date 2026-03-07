@@ -60,7 +60,9 @@ users = await User.objects.filter(User.age > 18).fetch()
 ### Sync
 
 ```python
-with engine.transaction():
+import pgstorm
+
+with pgstorm.transaction():
     # all queries in this block run in a transaction
     User.objects.filter(User.id == 1)  # uses same connection
     # commit on success, rollback on exception
@@ -69,8 +71,23 @@ with engine.transaction():
 ### Async
 
 ```python
-async with engine.transaction():
+import pgstorm
+
+async with pgstorm.transaction():
     await User.objects.all().fetch()
+```
+
+## set_search_path
+
+Set the PostgreSQL `search_path` inside a transaction. Must be called within `pgstorm.transaction()`.
+
+```python
+import pgstorm
+
+with pgstorm.transaction():
+    pgstorm.set_search_path("my_schema", "public")  # transaction-scoped (SET LOCAL)
+    # or
+    pgstorm.set_search_path("my_schema", session=True)  # session-scoped (SET)
 ```
 
 ## Manual Control

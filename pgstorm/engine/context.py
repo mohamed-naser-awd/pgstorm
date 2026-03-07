@@ -10,3 +10,6 @@ if TYPE_CHECKING:
 
 # Context var for the current engine. Set by create_engine().
 engine: ContextVar["BaseEngine | None"] = ContextVar("pgstorm_engine", default=None)
+
+# True when inside pgstorm.transaction() context. Used by set_search_path.
+in_transaction: ContextVar[bool] = ContextVar("pgstorm_in_transaction", default=False)

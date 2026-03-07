@@ -5,7 +5,8 @@ from __future__ import annotations
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Union
 
-from pgstorm.engine.context import engine as engine_context_var
+from pgstorm.engine.context import engine as engine_context_var, in_transaction as in_transaction_var
+from pgstorm.engine.query_utils import composable_to_plain
 from pgstorm.observers import (
     ObserverContext,
     notify,
@@ -129,6 +130,41 @@ class BaseEngine(ABC):
         raw = RawQuery(sql=query, params=params or [])
         return self.execute(raw)
 
+    def set_search_path(
+        self, *schemas: str, session: bool = False
+    ) -> Any:
+        """
+        Set the search_path for the current transaction or session.
+
+        Must be called inside ``pgstorm.transaction()`` context. Uses ``SET LOCAL``
+        by default (transaction-scoped); pass ``session=True`` for ``SET``
+        (session-scoped, persists until connection closes).
+
+        Args:
+            *schemas: Schema names to set (e.g. ``pgstorm.set_search_path("my_schema", "public")``).
+            session: If True, use ``SET search_path`` (session-wide). If False, use
+                ``SET LOCAL search_path`` (transaction-scoped).
+
+        Raises:
+            RuntimeError: If not inside a transaction context.
+        """
+        if not in_transaction_var.get():
+            raise RuntimeError(
+                "set_search_path must be used inside a transaction. "
+                "Use 'with pgstorm.transaction():' or 'async with pgstorm.transaction():' first."
+            )
+        if not schemas:
+            raise ValueError("set_search_path requires at least one schema name")
+        from psycopg import sql
+
+        cmd = sql.SQL("SET LOCAL") if not session else sql.SQL("SET")
+        query = (
+            sql.SQL("{} search_path TO ").format(cmd)
+            + sql.SQL(", ").join(sql.Identifier(s) for s in schemas)
+        )
+        query_str, _ = composable_to_plain(query, [])
+        return self.raw_execute(query_str)
+
     def begin(self) -> Any:
         """Begin transaction. Returns coroutine for async."""
         notify(ObserverContext(action=TRANSACTION_BEGIN))
@@ -176,12 +212,16 @@ class BaseEngine(ABC):
 class _SyncTransactionContext:
     def __init__(self, engine: BaseEngine) -> None:
         self._engine = engine
+        self._token = None
 
     def __enter__(self) -> BaseEngine:
         self._engine.begin()
+        self._token = in_transaction_var.set(True)
         return self._engine
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        if self._token is not None:
+            in_transaction_var.reset(self._token)
         if exc_type is not None:
             self._engine.rollback()
         else:
@@ -192,12 +232,16 @@ class _SyncTransactionContext:
 class _AsyncTransactionContext:
     def __init__(self, engine: BaseEngine) -> None:
         self._engine = engine
+        self._token = None
 
     async def __aenter__(self) -> BaseEngine:
         await self._engine.begin()
+        self._token = in_transaction_var.set(True)
         return self._engine
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
+        if self._token is not None:
+            in_transaction_var.reset(self._token)
         if exc_type is not None:
             await self._engine.rollback()
         else:

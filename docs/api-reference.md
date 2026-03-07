@@ -41,19 +41,41 @@ Context variable holding the current engine. Set by `create_engine()` when `set_
 
 ---
 
-### `BaseEngine.transaction()`
+### `transaction()`
 
 ```python
 # Sync
-with engine.transaction():
+with pgstorm.transaction():
     ...
 
 # Async
-async with engine.transaction():
+async with pgstorm.transaction():
     ...
 ```
 
-Context manager for transactions. Commits on success, rolls back on exception.
+Context manager for transactions using the engine from context. Commits on success, rolls back on exception.
+
+---
+
+### `set_search_path`
+
+```python
+# Transaction-scoped (SET LOCAL) - default
+with pgstorm.transaction():
+    pgstorm.set_search_path("my_schema", "public")
+    # queries use my_schema, public
+
+# Session-scoped (SET) - persists until connection closes
+with pgstorm.transaction():
+    pgstorm.set_search_path("my_schema", session=True)
+```
+
+Set the PostgreSQL `search_path`. **Must be called inside** `pgstorm.transaction()` — raises `RuntimeError` otherwise.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `*schemas` | `str` | Schema names (e.g. `"my_schema"`, `"public"`) |
+| `session` | `bool` | If `False` (default), use `SET LOCAL` (transaction-scoped). If `True`, use `SET` (session-scoped) |
 
 ---
 
@@ -253,9 +275,9 @@ user = await User.objects.create(email="a@b.com", age=25)
 
 ---
 
-#### `bulk_create(objs, *, returning=True) -> list[T] | Awaitable[list[T]]`
+#### `bulk_create(objs, *, returning=True, batch_size=None) -> list[T] | Awaitable[list[T]]`
 
-Insert multiple instances. If `returning=True` (default), populates generated primary keys on each instance.
+Insert multiple instances. If `returning=True` (default), populates generated primary keys on each instance. If `batch_size` is set, inserts are split into batches of that size; default `None` inserts all at once.
 
 ---
 

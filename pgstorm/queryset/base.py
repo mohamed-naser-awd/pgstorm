@@ -65,6 +65,7 @@ class QuerySet(Generic[T]):
     _result_cache: list[T] | None
     _values: bool
     _values_flat: bool
+    _prefetch_related: list[Any]
 
     def __init__(self, model: type[T]) -> None:
         self.model = model
@@ -88,6 +89,7 @@ class QuerySet(Generic[T]):
         self._result_cache = None
         self._values = False
         self._values_flat = False
+        self._prefetch_related = []
 
     def using_schema(self, schema: str | None) -> Self:
         """
@@ -113,7 +115,23 @@ class QuerySet(Generic[T]):
 
         compiled = self.compiled()
         rows = eng.execute(compiled)
-        return self._rows_to_instances(rows)
+        instances = self._rows_to_instances_sync(rows)
+        prefetches = getattr(self, "_prefetch_related", []) or []
+        if prefetches and not (
+            getattr(self, "_values", False)
+            or getattr(self, "_values_flat", False)
+            or getattr(self, "_aggregates", [])
+        ):
+            from pgstorm.queryset.prefetch_impl import _do_prefetch_sync
+
+            _do_prefetch_sync(
+                instances,
+                prefetches,
+                self.model,
+                lambda c: eng.execute(c),
+                schema=getattr(self, "_schema", None),
+            )
+        return instances
 
     def _rows_to_instances_sync(self, rows: list[dict[str, Any]]) -> list[T]:
         """Map row dicts to model instances. When joins with rhs_model exist, hydrate both main and joined objects.
@@ -228,10 +246,53 @@ class QuerySet(Generic[T]):
 
             async def _run() -> Any:
                 rows = await eng.execute(compiled)
-                return then(rows)
+                result = then(rows)
+                if hasattr(result, "__await__"):
+                    return await result
+                return result
 
             return _run()
         return then(eng.execute(compiled))
+
+    def _then_with_prefetch(self, rows: list[dict[str, Any]]) -> list[T] | Awaitable[list[T]]:
+        """Convert rows to instances and run prefetch if configured. May return coroutine when async+prefetch."""
+        from pgstorm.engine.context import engine as engine_context_var
+        from pgstorm.queryset.prefetch_impl import _do_prefetch_async, _do_prefetch_sync
+
+        instances = self._rows_to_instances_sync(rows)
+        prefetches = getattr(self, "_prefetch_related", []) or []
+        if prefetches and not (
+            getattr(self, "_values", False)
+            or getattr(self, "_values_flat", False)
+            or getattr(self, "_aggregates", [])
+        ):
+            eng = engine_context_var.get()
+            if eng is not None and eng.is_async:
+
+                async def _prefetch_and_return() -> list[T]:
+                    async def exec_fn(c: Any) -> Any:
+                        return await eng.execute(c)
+
+                    await _do_prefetch_async(
+                        instances,
+                        prefetches,
+                        self.model,
+                        exec_fn,
+                        schema=getattr(self, "_schema", None),
+                    )
+                    self._result_cache = instances
+                    return instances
+
+                return _prefetch_and_return()
+            _do_prefetch_sync(
+                instances,
+                prefetches,
+                self.model,
+                (lambda c: eng.execute(c)) if eng else (lambda c: []),
+                schema=getattr(self, "_schema", None),
+            )
+        self._result_cache = instances
+        return instances
 
     @overload
     def _fetch(self: "QuerySet[T]") -> list[T]: ...
@@ -242,12 +303,7 @@ class QuerySet(Generic[T]):
         Load results. With sync engine returns list[T]. With async engine returns Awaitable[list[T]] — use await.
         Internal use only; prefer iteration, indexing, or len().
         """
-
-        def then(rows: list[dict[str, Any]]) -> list[T]:
-            self._result_cache = self._rows_to_instances(rows)
-            return self._result_cache
-
-        return self._execute(self.compiled(), then)
+        return self._execute(self.compiled(), self._then_with_prefetch)
 
     def _ensure_fetched(self) -> list[T]:
         """
@@ -279,11 +335,20 @@ class QuerySet(Generic[T]):
     def __getitem__(self, index: int) -> T | Awaitable[T]:
         if self._result_cache is not None:
             return self._result_cache[index]
-        def then(rows: list[dict[str, Any]]) -> T:
-            instances = self._rows_to_instances(rows)
-            self._result_cache = instances
-            return instances[index]
-        return self._execute(self.compiled(), then)
+
+        def then(rows: list[dict[str, Any]]) -> T | Awaitable[T]:
+            result = self._then_with_prefetch(rows)
+            if hasattr(result, "__await__"):
+                async def _get_index() -> T:
+                    instances = await result
+                    return instances[index]
+                return _get_index()
+            return result[index]
+
+        out = self._execute(self.compiled(), then)
+        if hasattr(out, "__await__"):
+            return out
+        return out
 
     @overload
     def __len__(self) -> int: ...
@@ -292,11 +357,20 @@ class QuerySet(Generic[T]):
     def __len__(self) -> int | Awaitable[int]:
         if self._result_cache is not None:
             return len(self._result_cache)
-        def then(rows: list[dict[str, Any]]) -> int:
-            instances = self._rows_to_instances(rows)
-            self._result_cache = instances
-            return len(instances)
-        return self._execute(self.compiled(), then)
+
+        def then(rows: list[dict[str, Any]]) -> int | Awaitable[int]:
+            result = self._then_with_prefetch(rows)
+            if hasattr(result, "__await__"):
+                async def _get_len() -> int:
+                    instances = await result
+                    return len(instances)
+                return _get_len()
+            return len(result)
+
+        out = self._execute(self.compiled(), then)
+        if hasattr(out, "__await__"):
+            return out
+        return out
 
     def as_cte(self, name: str = None) -> Self:
         qs = self.copy()
@@ -330,6 +404,33 @@ class QuerySet(Generic[T]):
         qs._result_cache = None
         qs._values = self._values
         qs._values_flat = self._values_flat
+        qs._prefetch_related = list(getattr(self, "_prefetch_related", []) or [])
+        return qs
+
+    def prefetch_related(self, *prefetches: Any) -> Self:
+        """
+        Prefetch related objects. Each argument is a Prefetch instance.
+
+        Example:
+            orders = await query(Order).prefetch_related(
+                Prefetch(
+                    UserProfile,
+                    on=UserProfile.user == Order.user,
+                    as_attr="user_profile"
+                )
+            )
+
+        - Prefetch(model_or_queryset, on=..., as_attr=...)
+        - on: Join condition (Expression). If None, uses FK between main and prefetch (raises if no FK).
+        - as_attr: Attribute name on main objects. If None, uses FK reverse name (raises if no FK).
+        """
+        from pgstorm.prefetch import Prefetch
+
+        qs = self.copy()
+        for p in prefetches:
+            if not isinstance(p, Prefetch):
+                raise TypeError(f"prefetch_related() requires Prefetch instances, got {type(p).__name__}")
+        qs._prefetch_related = list(prefetches)
         return qs
 
     def values(self, *columns: str, flat: bool = False) -> Self:
@@ -556,6 +657,7 @@ class QuerySet(Generic[T]):
         objs: list[T],
         *,
         returning: bool = True,
+        batch_size: int | None = None,
     ) -> list[T]: ...
     @overload
     def bulk_create(
@@ -563,17 +665,21 @@ class QuerySet(Generic[T]):
         objs: list[T],
         *,
         returning: bool = True,
+        batch_size: int | None = None,
     ) -> Awaitable[list[T]]: ...
     def bulk_create(
         self,
         objs: list[T],
         *,
         returning: bool = True,
+        batch_size: int | None = None,
     ) -> list[T] | Awaitable[list[T]]:
         """
         Insert multiple instances. With sync engine returns list[T]; with async returns Awaitable[list[T]] — use await.
         If returning=True (default), populates generated pk on each instance.
+        If batch_size is set, inserts are split into batches of that size; default None inserts all at once.
         """
+        from pgstorm.engine.context import engine as engine_context_var
         from pgstorm.queryset.parser import (
             _instance_to_row_data,
             _iter_model_columns,
@@ -584,6 +690,12 @@ class QuerySet(Generic[T]):
         if not objs:
             return objs
 
+        eng = engine_context_var.get()
+        if eng is None:
+            raise RuntimeError(
+                "No engine set. Call create_engine() or engine.set(engine) before using querysets."
+            )
+
         model = self.model
         pk_attr = _model_primary_key_field(model)
         all_cols = dict(_iter_model_columns(model))
@@ -592,32 +704,50 @@ class QuerySet(Generic[T]):
             pk_attr,
         )
 
-        rows_data: list[dict[str, Any]] = []
-        for obj in objs:
-            row = _instance_to_row_data(obj, model, include_pk=True)
-            if db_pk and row.get(db_pk) is None:
-                row = {k: v for k, v in row.items() if k != db_pk}
-            rows_data.append(row)
+        size = batch_size if batch_size is not None else len(objs)
 
-        if not rows_data:
-            raise ValueError("No data to insert")
+        def insert_batch(chunk: list[T]) -> Any:
+            rows_data: list[dict[str, Any]] = []
+            for obj in chunk:
+                row = _instance_to_row_data(obj, model, include_pk=True)
+                if db_pk and row.get(db_pk) is None:
+                    row = {k: v for k, v in row.items() if k != db_pk}
+                rows_data.append(row)
 
-        compiled = compile_insert(
-            model,
-            rows_data,
-            schema=self._schema,
-            returning=returning,
-            extra={"objs": objs, "row_count": len(objs)},
-        )
+            if not rows_data:
+                raise ValueError("No data to insert")
 
-        def then(result: list[dict[str, Any]] | None) -> list[T]:
-            if returning and result and db_pk:
-                for i, row in enumerate(result):
-                    if i < len(objs) and db_pk in row:
-                        setattr(objs[i], f"_pgstorm_value_{pk_attr}", row[db_pk])
+            compiled = compile_insert(
+                model,
+                rows_data,
+                schema=self._schema,
+                returning=returning,
+                extra={"objs": chunk, "row_count": len(chunk)},
+            )
+
+            def then(result: list[dict[str, Any]] | None) -> None:
+                if returning and result and db_pk:
+                    for i, row in enumerate(result):
+                        if i < len(chunk) and db_pk in row:
+                            setattr(chunk[i], f"_pgstorm_value_{pk_attr}", row[db_pk])
+
+            return self._execute(compiled, then)
+
+        if eng.is_async:
+
+            async def _run_batched() -> list[T]:
+                for start in range(0, len(objs), size):
+                    chunk = objs[start : start + size]
+                    out = insert_batch(chunk)
+                    await out
+                return objs
+
+            return _run_batched()
+        else:
+            for start in range(0, len(objs), size):
+                chunk = objs[start : start + size]
+                insert_batch(chunk)
             return objs
-
-        return self._execute(compiled, then)
 
     @overload
     def bulk_update(
