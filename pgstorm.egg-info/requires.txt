@@ -1,0 +1,11 @@
+psycopg[binary]>=3.0
+
+[all]
+psycopg2-binary
+asyncpg
+
+[asyncpg]
+asyncpg
+
+[psycopg2]
+psycopg2-binary

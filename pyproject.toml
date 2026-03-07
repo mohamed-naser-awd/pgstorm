@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgstorm"
+version = "0.1.0"
+description = "A lightweight PostgreSQL query builder and mini-ORM for Python"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "pgstorm contributors" }
+]
+keywords = ["postgresql", "orm", "query-builder", "async", "database"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+]
+
+dependencies = [
+    "psycopg[binary]>=3.0",
+]
+
+[project.optional-dependencies]
+# psycopg2: choose one (normal requires libpq; binary is pre-built)
+psycopg2 = ["psycopg2"]
+psycopg2-binary = ["psycopg2-binary"]
+# psycopg3: choose one (normal requires libpq; binary is pre-built)
+psycopg3 = ["psycopg>=3.0"]
+psycopg3-binary = ["psycopg[binary]>=3.0"]
+asyncpg = ["asyncpg"]
+all = [
+    "psycopg2-binary",
+    "psycopg[binary]>=3.0",
+    "asyncpg",
+]
+
+[project.urls]
+Repository = "https://github.com/your-org/pgstorm"
+Documentation = "https://github.com/your-org/pgstorm#readme"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pgstorm*"]

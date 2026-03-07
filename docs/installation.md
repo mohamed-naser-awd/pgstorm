@@ -4,18 +4,32 @@
 
 - Python 3.10+
 - PostgreSQL database
-- [psycopg](https://www.psycopg.org/psycopg3/) (for psycopg3 interfaces) or psycopg2 / asyncpg depending on your chosen interface
+- A driver matching your chosen interface (installed automatically via extras)
 
 ## Install
 
 ```bash
-pip install psycopg[binary]
+# Default: psycopg3 with binary (sync and async)
+pip install pgstorm
+
+# Or install with a specific driver
+# psycopg2: normal (requires libpq) or binary (pre-built)
+pip install pgstorm[psycopg2]        # psycopg2 (sync)
+pip install pgstorm[psycopg2-binary] # psycopg2-binary (sync)
+
+# psycopg3: normal or binary
+pip install pgstorm[psycopg3]        # psycopg3 (normal build)
+pip install pgstorm[psycopg3-binary] # psycopg3 binary (pre-built)
+
+pip install pgstorm[asyncpg]         # asyncpg (async)
+pip install pgstorm[all]             # all drivers (binary variants)
 ```
 
-Then add the `pgstorm` package to your project. If you have a `pyproject.toml`:
+**From source** (development):
 
 ```bash
 pip install -e .
+pip install -e ".[asyncpg]"     # with asyncpg
 ```
 
 ## Minimal Setup
