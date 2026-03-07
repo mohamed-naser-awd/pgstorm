@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union
+from typing import Any, Union
 
-from pgstorm.engine.interface import EngineInterface
-
-if TYPE_CHECKING:
-    from pgstorm.queryset.parser import CompiledQuery
-
+from pgstorm.engine.interface import CompiledOrRaw, EngineInterface
+from pgstorm.observers import (
+    CONNECTION_OPEN,
+    CURSOR_CLOSE,
+    CURSOR_OPEN,
+    ObserverContext,
+    notify,
+)
 
 class Psycopg3SyncInterface(EngineInterface):
     """Sync interface using psycopg (v3)."""
@@ -29,16 +32,22 @@ class Psycopg3SyncInterface(EngineInterface):
                 self._conn = psycopg.connect(self._conninfo, **self._kwargs)
             else:
                 self._conn = psycopg.connect(conninfo="", **{**self._conninfo, **self._kwargs})
+            notify(ObserverContext(action=CONNECTION_OPEN, extra={"connection": self._conn}))
         return self._conn
 
-    def execute(self, compiled: "CompiledQuery") -> list[Any]:
+    def execute(self, compiled: CompiledOrRaw) -> list[Any]:
         conn = self._get_conn()
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        notify(ObserverContext(action=CURSOR_OPEN, extra={"cursor": cur}))
+        try:
             cur.execute(compiled.sql, compiled.params)
             if cur.description:
                 columns = [d.name for d in cur.description]
                 return [dict(zip(columns, row)) for row in cur.fetchall()]
-        return []
+            return []
+        finally:
+            notify(ObserverContext(action=CURSOR_CLOSE, extra={"cursor": cur}))
+            cur.close()
 
     def begin(self) -> None:
         self._get_conn().rollback()  # Clear any previous state

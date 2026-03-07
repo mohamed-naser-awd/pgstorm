@@ -63,6 +63,8 @@ class QuerySet(Generic[T]):
     is_subquery: bool
     cte_name: str | None
     _result_cache: list[T] | None
+    _values: bool
+    _values_flat: bool
 
     def __init__(self, model: type[T]) -> None:
         self.model = model
@@ -84,6 +86,8 @@ class QuerySet(Generic[T]):
         self.is_subquery = False
         self.cte_name = None
         self._result_cache = None
+        self._values = False
+        self._values_flat = False
 
     def using_schema(self, schema: str | None) -> Self:
         """
@@ -97,8 +101,8 @@ class QuerySet(Generic[T]):
         qs._schema = schema
         return qs
 
-    def _fetch(self) -> list[T]:
-        """Load results from the database via the engine from context."""
+    def _load_sync(self) -> list[T]:
+        """Load results from the database via the engine from context (sync only)."""
         from pgstorm.engine.context import engine as engine_context_var
 
         eng = engine_context_var.get()
@@ -113,8 +117,13 @@ class QuerySet(Generic[T]):
 
     def _rows_to_instances_sync(self, rows: list[dict[str, Any]]) -> list[T]:
         """Map row dicts to model instances. When joins with rhs_model exist, hydrate both main and joined objects.
-        When the queryset has aggregates (with or without group_by), return raw row dicts instead of model instances."""
+        When the queryset has aggregates (with or without group_by), return raw row dicts instead of model instances.
+        When _values=True, return raw dicts. When _values_flat=True (single column), return flat list of values."""
         if getattr(self, "_aggregates", []):
+            return rows  # type: ignore[return-value]
+        if getattr(self, "_values", False):
+            if getattr(self, "_values_flat", False):
+                return [next(iter(r.values())) for r in rows]  # type: ignore[return-value]
             return rows  # type: ignore[return-value]
         from pgstorm.columns.base import RelationField
         from pgstorm.queryset.parser import (
@@ -225,12 +234,13 @@ class QuerySet(Generic[T]):
         return then(eng.execute(compiled))
 
     @overload
-    def fetch(self: "QuerySet[T]") -> list[T]: ...
+    def _fetch(self: "QuerySet[T]") -> list[T]: ...
     @overload
-    def fetch(self: "QuerySet[T]") -> Awaitable[list[T]]: ...
-    def fetch(self) -> list[T] | Awaitable[list[T]]:
+    def _fetch(self: "QuerySet[T]") -> Awaitable[list[T]]: ...
+    def _fetch(self) -> list[T] | Awaitable[list[T]]:
         """
         Load results. With sync engine returns list[T]. With async engine returns Awaitable[list[T]] — use await.
+        Internal use only; prefer iteration, indexing, or len().
         """
 
         def then(rows: list[dict[str, Any]]) -> list[T]:
@@ -243,10 +253,10 @@ class QuerySet(Generic[T]):
         """
         Ensure this queryset has been evaluated (sync only).
 
-        For async engines, synchronous evaluation isn't supported — use `await qs.fetch()` or `async for`.
+        For async engines, synchronous evaluation isn't supported — use async for.
         """
         if self._result_cache is None:
-            self._result_cache = self._fetch()
+            self._result_cache = self._load_sync()
         return self._result_cache
 
     def __iter__(self) -> Iterator[T]:
@@ -318,6 +328,23 @@ class QuerySet(Generic[T]):
         qs.is_subquery = self.is_subquery
         qs.cte_name = self.cte_name
         qs._result_cache = None
+        qs._values = self._values
+        qs._values_flat = self._values_flat
+        return qs
+
+    def values(self, *columns: str, flat: bool = False) -> Self:
+        """
+        Return results as list of dicts instead of model instances.
+        Uses the given columns for SELECT; if none given, selects all model columns.
+        When flat=True and exactly one column is selected, returns a flat list of values.
+        """
+        if flat and len(columns) != 1:
+            raise ValueError("flat=True requires exactly one column")
+        qs = self.copy()
+        qs._values = True
+        qs._values_flat = flat
+        if columns:
+            qs._columns = list(columns)
         return qs
 
     def filter(self, *args: Expression | NotExpression | Q) -> Self:
@@ -576,7 +603,11 @@ class QuerySet(Generic[T]):
             raise ValueError("No data to insert")
 
         compiled = compile_insert(
-            model, rows_data, schema=self._schema, returning=returning
+            model,
+            rows_data,
+            schema=self._schema,
+            returning=returning,
+            extra={"objs": objs, "row_count": len(objs)},
         )
 
         def then(result: list[dict[str, Any]] | None) -> list[T]:
@@ -634,7 +665,13 @@ class QuerySet(Generic[T]):
             return None
 
         rows_data = [_instance_to_row_data(obj, model, include_pk=True) for obj in objs]
-        compiled = compile_bulk_update(model, rows_data, db_fields, schema=self._schema)
+        compiled = compile_bulk_update(
+            model,
+            rows_data,
+            db_fields,
+            schema=self._schema,
+            extra={"objs": objs, "fields": fields},
+        )
         return self._execute(compiled, lambda _: None)
 
     @overload

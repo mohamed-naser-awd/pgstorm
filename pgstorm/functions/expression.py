@@ -90,6 +90,30 @@ class BoundColumnRef:
         from pgstorm import operator as op
         return self._expr(op.GTE, rhs)
 
+    def __add__(self, rhs: Any) -> Expression:
+        return Expression(self, "+", _resolve_rhs_for_arithmetic(rhs))
+
+    def __radd__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "+", self)
+
+    def __sub__(self, rhs: Any) -> Expression:
+        return Expression(self, "-", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rsub__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "-", self)
+
+    def __mul__(self, rhs: Any) -> Expression:
+        return Expression(self, "*", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rmul__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "*", self)
+
+    def __truediv__(self, rhs: Any) -> Expression:
+        return Expression(self, "/", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rtruediv__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "/", self)
+
     def __getattr__(self, name: str) -> Any:
         # If this ref is for a relation (FK), resolve name on the related model first
         if self.target_model is not None:
@@ -209,21 +233,80 @@ def not_(condition: Q | Expression | AndExpression | OrExpression | NotExpressio
     return Q(NotExpression(_to_expression(condition)))
 
 
+def _resolve_rhs_for_arithmetic(rhs: Any) -> Any:
+    """Convert Python literals to Value when used in arithmetic. Value and combinables pass through."""
+    if isinstance(rhs, (BoundColumnRef, F, Value)):
+        return rhs
+    if isinstance(rhs, Expression) and rhs.operator in ("+", "-", "*", "/"):
+        return rhs
+    # Infer output_field from Python type for common literals
+    if isinstance(rhs, int):
+        from pgstorm import types
+        return Value(rhs, output_field=types.Integer)
+    if isinstance(rhs, float):
+        return Value(rhs, output_field=None)
+    if isinstance(rhs, (str, bytes)):
+        from pgstorm import types
+        return Value(rhs, output_field=types.String)
+    return Value(rhs, output_field=None)
+
+
+class Value:
+    """
+    Wraps a literal value for use in expressions. Use when you need explicit output_field.
+    Literals in arithmetic (e.g. F(col) + 100) are automatically wrapped in Value.
+    """
+    __slots__ = ("value", "output_field")
+
+    def __init__(self, value: Any, *, output_field: Any = None) -> None:
+        self.value = value
+        self.output_field = output_field
+
+    def _expr(self, operator: str, rhs: Any) -> Expression:
+        return Expression(self, operator, rhs)
+
+    def __add__(self, rhs: Any) -> Expression:
+        return Expression(self, "+", _resolve_rhs_for_arithmetic(rhs))
+
+    def __radd__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "+", self)
+
+    def __sub__(self, rhs: Any) -> Expression:
+        return Expression(self, "-", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rsub__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "-", self)
+
+    def __mul__(self, rhs: Any) -> Expression:
+        return Expression(self, "*", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rmul__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "*", self)
+
+    def __truediv__(self, rhs: Any) -> Expression:
+        return Expression(self, "/", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rtruediv__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "/", self)
+
+    def __repr__(self) -> str:
+        return f"Value({self.value!r}, output_field={self.output_field!r})"
+
+
 class F:
     """
-    Reference to an annotation or alias by name. Use in filter/order_by.
-    When compiled, resolves to the underlying expression (e.g. Concat(...)).
+    Reference to a field or annotation/alias by name. Use in filter/order_by/annotate.
+    - F("alias_name") resolves to an annotation or alias (e.g. in filter).
+    - F(Model.column) references a column directly for use in annotate expressions.
 
     Example:
-        Model.objects.alias(full_name=Concat(User.first_name, " ", User.last_name)).filter(
-            F("full_name").ilike("%mohamed%")
-        )
-        -> WHERE CONCAT(first_name, ' ', last_name) ILIKE '%mohamed%'
+        Model.objects.alias(full_name=Concat(...)).filter(F("full_name").ilike("%x%"))
+        Model.objects.annotate(extra_value=F(User.age) + 100)
     """
 
     __slots__ = ("name",)
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str | BoundColumnRef) -> None:
         self.name = name
 
     def _expr(self, operator: str, rhs: Any) -> Expression:
@@ -284,6 +367,30 @@ class F:
     def __ge__(self, rhs: Any) -> Expression:
         from pgstorm import operator as op
         return self._expr(op.GTE, rhs)
+
+    def __add__(self, rhs: Any) -> Expression:
+        return Expression(self, "+", _resolve_rhs_for_arithmetic(rhs))
+
+    def __radd__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "+", self)
+
+    def __sub__(self, rhs: Any) -> Expression:
+        return Expression(self, "-", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rsub__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "-", self)
+
+    def __mul__(self, rhs: Any) -> Expression:
+        return Expression(self, "*", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rmul__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "*", self)
+
+    def __truediv__(self, rhs: Any) -> Expression:
+        return Expression(self, "/", _resolve_rhs_for_arithmetic(rhs))
+
+    def __rtruediv__(self, lhs: Any) -> Expression:
+        return Expression(_resolve_rhs_for_arithmetic(lhs), "/", self)
 
     def __repr__(self) -> str:
         return f"F({self.name!r})"

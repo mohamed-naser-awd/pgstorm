@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any, Union
 
-if TYPE_CHECKING:
-    from pgstorm.queryset.parser import CompiledQuery
+from pgstorm.queryset.parser import CompiledQuery, RawQuery
+
+CompiledOrRaw = Union[CompiledQuery, RawQuery]
 
 
 class EngineInterface(ABC):
@@ -22,11 +23,10 @@ class EngineInterface(ABC):
         ...
 
     @abstractmethod
-    def execute(self, compiled: "CompiledQuery") -> Any:
+    def execute(self, compiled: "CompiledOrRaw") -> Any:
         """
-        Execute a compiled query and return rows.
-        Returns list of rows (dict-like or tuple) for SELECT, or None for DML.
-        For async interfaces, returns a coroutine.
+        Execute a compiled query or raw SQL. Returns list of rows for SELECT,
+        or empty list for DML. For async interfaces, returns a coroutine.
         """
         ...
 

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union
+from typing import Any, Union
 
-from pgstorm.engine.interface import EngineInterface
+from pgstorm.engine.interface import CompiledOrRaw, EngineInterface
 from pgstorm.engine.query_utils import composable_to_plain, to_asyncpg_format
-
-if TYPE_CHECKING:
-    from pgstorm.queryset.parser import CompiledQuery
+from pgstorm.observers import CONNECTION_OPEN, ObserverContext, notify
+from pgstorm.queryset.parser import RawQuery
 
 
 class AsyncpgInterface(EngineInterface):
@@ -45,11 +44,16 @@ class AsyncpgInterface(EngineInterface):
                 self._conn = await asyncpg.connect(args[0], **kwargs)
             else:
                 self._conn = await asyncpg.connect(**kwargs)
+            notify(ObserverContext(action=CONNECTION_OPEN, extra={"connection": self._conn}))
         return self._conn
 
-    async def execute(self, compiled: "CompiledQuery") -> list[dict[str, Any]]:
-        query_str, params = composable_to_plain(compiled.sql, compiled.params)
-        query_str, params = to_asyncpg_format(query_str, params)
+    async def execute(self, compiled: CompiledOrRaw) -> list[dict[str, Any]]:
+        if isinstance(compiled, RawQuery):
+            query_str, params = compiled.sql, compiled.params
+            query_str, params = to_asyncpg_format(query_str, params)
+        else:
+            query_str, params = composable_to_plain(compiled.sql, compiled.params)
+            query_str, params = to_asyncpg_format(query_str, params)
         conn = await self._get_conn()
         rows = await conn.fetch(query_str, *params)
         return [dict(row) for row in rows]

@@ -1,4 +1,4 @@
-from pgstorm import BaseModel, types
+from pgstorm import BaseModel, BaseView, types
 from pgstorm.functions.func import Now
 
 
@@ -13,6 +13,24 @@ class UserProfile(BaseModel):
     __table__ = "user_profile"
     user: types.ForeignKey[User, types.ON_DELETE_CASCADE]
     id: types.BigSerial[types.IS_PRIMARY_KEY_FIELD]
+
+
+# Pre-defined queryset: inherits from User for columns, defines data via __queryset__
+class ActiveUsers(BaseView, User):
+    __table__ = "active_users"
+    __queryset__ = lambda: User.objects  # or User.objects.filter(User.email.like("%@example.com"))
+    __is_cte__ = True  # emit as WITH active_users AS (...)
+
+
+# Temporary table with raw SQL (define columns explicitly)
+class UserStats(BaseView):
+    __table__ = "user_stats"
+    __query__ = 'SELECT id, email, is_active FROM {schema}."user" LIMIT 10'
+    __is_cte__ = True
+
+    id: types.Integer
+    email: types.String
+    is_active: types.Integer
 
 
 class AuditLog(BaseModel):

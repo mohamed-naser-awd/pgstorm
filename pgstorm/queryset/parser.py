@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, TYPE_CHECKING
 
 from psycopg import sql
@@ -17,6 +17,7 @@ from pgstorm.functions.expression import (
     OrExpression,
     OuterRef,
     Subquery,
+    Value,
 )
 from pgstorm.functions.func import Func
 from pgstorm import operator as op
@@ -26,16 +27,39 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers only
 
 
 @dataclass(frozen=True, slots=True)
+class RawQuery:
+    """
+    Container for raw SQL execution.
+    Used by engine.raw_execute(query, params).
+    """
+
+    sql: str
+    params: List[Any] = field(default_factory=list)
+    action: str = "raw_sql"
+    model: type[Any] | None = None
+    table: str | None = None
+    extra: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledQuery:
     """
     Simple container for a compiled queryset.
 
     - sql: a psycopg3 SQL composable object (sql.Composable).
     - params: the list of parameters in order.
+    - action: observer action (fetch, create, update, delete, etc.).
+    - model: model class for table-specific observers.
+    - table: table name for observer context.
+    - extra: additional data for observers (e.g. objs, fields).
     """
 
     sql: sql.Composable
     params: List[Any]
+    action: str = "query"
+    model: type[Any] | None = None
+    table: str | None = None
+    extra: dict[str, Any] | None = None
 
 
 def _table_name(model: type[Any]) -> str:
@@ -102,17 +126,58 @@ def _db_column_name(ref: Any, model: type[Any] | None = None, rhs_model: type[An
     return getattr(ref, "attr_name", None) or getattr(ref, "name", None) or ""
 
 
+def _attr_to_db_column_name(model: type[Any], attr_name: str) -> str:
+    """Resolve model attribute name to DB column name. Falls back to attr_name if not found."""
+    for name, col in _iter_model_columns(model):
+        if name == attr_name:
+            return col.name if getattr(col, "name", None) else attr_name
+    return attr_name
+
+
 def _compile_aggregate(
     agg: Aggregate,
     alias: str,
     table: str,
     model: type[Any],
+    params: List[Any],
+    *,
+    annotations: dict[str, Any] | None = None,
+    aliases: dict[str, Any] | None = None,
 ) -> sql.Composable:
     """Compile a single aggregate to SQL: FUNC(column) AS alias or FUNC(*) AS alias."""
     func_sql = sql.SQL(agg.func_name)
     if agg.column is None:
         # COUNT(*) - count all rows
         inner = sql.SQL("*")
+    elif isinstance(agg.column, str):
+        # Check if it's an annotation or alias (e.g. Count("extra_value") where extra_value was annotated)
+        combined = {**(aliases or {}), **(annotations or {})}
+        resolved = combined.get(agg.column)
+        if resolved is not None:
+            inner = _compile_value(
+                resolved,
+                table,
+                params,
+                None,
+                model,
+                None,
+                annotations,
+                aliases,
+            )
+        else:
+            col_name = _attr_to_db_column_name(model, agg.column)
+            inner = sql.Identifier(table, col_name)
+    elif isinstance(agg.column, Func):
+        inner = _compile_value(
+            agg.column,
+            table,
+            params,
+            None,
+            model,
+            None,
+            annotations,
+            aliases,
+        )
     else:
         col_name = _db_column_name(agg.column, agg.column.model)
         tbl = _table_name(agg.column.model)
@@ -134,7 +199,8 @@ def _compile_group_by_ref(
         col_name = _db_column_name(ref, model)
         return sql.Identifier(table, col_name)
     if isinstance(ref, str):
-        return sql.Identifier(table, ref)
+        col_name = _attr_to_db_column_name(model, ref)
+        return sql.Identifier(table, col_name)
     col_name = _db_column_name(ref, model) or getattr(ref, "name", str(ref))
     return sql.Identifier(table, col_name)
 
@@ -174,15 +240,28 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
             for ref in group_by_cols:
                 parts.append(_compile_group_by_ref(ref, table, model))
         if aggregates:
+            p = params if params is not None else []
+            ann = getattr(qs, "_annotations", {}) or {}
+            al = getattr(qs, "_aliases", {}) or {}
             for agg, alias in aggregates:
-                parts.append(_compile_aggregate(agg, alias, table, model))
+                parts.append(
+                    _compile_aggregate(
+                        agg, alias, table, model, p,
+                        annotations=ann, aliases=al,
+                    )
+                )
         return sql.SQL(", ").join(parts)
 
     # Discover all columns by attribute name (never use SELECT *)
     all_columns = dict(_iter_model_columns(model))
+    annotations = getattr(qs, "_annotations", None) or {}
+    columns_set = set(qs._columns) if qs._columns else None
 
     if qs._columns:
-        selected_names = [name for name in qs._columns if name in all_columns]
+        selected_names = [
+            name for name in qs._columns
+            if name in all_columns or name in annotations
+        ]
     else:
         selected_names = list(all_columns.keys())
 
@@ -198,8 +277,9 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
     parts: list[sql.Composable] = []
     for attr_name in selected_names:
         col = all_columns.get(attr_name)
-        db_name = (col.name if col and getattr(col, "name", None) else None) or attr_name
-        parts.append(sql.Identifier(table, db_name))
+        if col is not None:
+            db_name = (col.name if getattr(col, "name", None) else None) or attr_name
+            parts.append(sql.Identifier(table, db_name))
 
     # Append joined model columns (for hydration when explicit joins have rhs_model)
     for join in getattr(qs, "_joins", []) or []:
@@ -210,6 +290,8 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
         rhs_schema = getattr(join, "rhs_schema", None)
         for attr_name, _ in _iter_model_columns(rhs_model):
             alias = f"{rhs_table}__{attr_name}"
+            if columns_set is not None and alias not in columns_set:
+                continue
             if rhs_schema:
                 parts.append(
                     sql.Identifier(rhs_schema, rhs_table, attr_name)
@@ -224,10 +306,11 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
                 )
 
     # Append annotations: expr AS alias
-    annotations = getattr(qs, "_annotations", None) or {}
     if annotations:
         ann_params: list[Any] = []
         for alias, expr in annotations.items():
+            if columns_set is not None and alias not in columns_set:
+                continue
             compiled = _compile_value(
                 expr, table, params, None, model, None, annotations, getattr(qs, "_aliases", None) or {}
             )
@@ -259,6 +342,7 @@ def _is_expression_value(value: Any) -> bool:
             Func,
             BoundColumnRef,
             Column,
+            Value,
         ),
     )
 
@@ -271,8 +355,17 @@ def _compile_dml_value(
 ) -> sql.Composable:
     """
     Compile a value for INSERT VALUES or UPDATE SET.
-    Handles expressions, subqueries, funcs, column refs; otherwise uses placeholder.
+    Handles expressions, subqueries, funcs, column refs, Value; otherwise uses placeholder.
     """
+    if isinstance(value, Expression) and value.operator in ("+", "-", "*", "/"):
+        return _compile_value(
+            value,
+            table,
+            params,
+            table_for_column=None,
+            model=model,
+            rhs_model=None,
+        )
     if isinstance(value, (Expression, NotExpression, AndExpression, OrExpression)):
         return _compile_expression(
             value,
@@ -290,7 +383,7 @@ def _compile_dml_value(
             outer_model=model,
         )
         return sql.SQL("(") + sub_sql + sql.SQL(")")
-    if isinstance(value, (Func, BoundColumnRef, Column)):
+    if isinstance(value, (Func, BoundColumnRef, Column, Value, F)):
         return _compile_value(
             value,
             table,
@@ -313,7 +406,7 @@ def _compile_value(
     annotations: dict[str, Any] | None = None,
     aliases: dict[str, Any] | None = None,
 ) -> sql.Composable:
-    """Compile a value (column ref, Func, or literal) to SQL."""
+    """Compile a value (column ref, Func, Value, arithmetic Expression, or literal) to SQL."""
     if isinstance(expr, Func):
         return _compile_func(expr, table, params, table_for_column, model, rhs_model, annotations, aliases)
     if isinstance(expr, BoundColumnRef):
@@ -324,6 +417,29 @@ def _compile_value(
         col_name = _db_column_name(expr, model, rhs_model)
         tbl = (table_for_column(expr) if table_for_column else None) or table
         return sql.Identifier(tbl, col_name)
+    if isinstance(expr, Value):
+        params.append(expr.value)
+        return sql.Placeholder()
+    if isinstance(expr, Expression) and expr.operator in ("+", "-", "*", "/"):
+        lhs_sql = _compile_value(
+            expr.lhs, table, params, table_for_column, model, rhs_model, annotations, aliases
+        )
+        rhs_sql = _compile_value(
+            expr.rhs, table, params, table_for_column, model, rhs_model, annotations, aliases
+        )
+        return sql.SQL("(") + lhs_sql + sql.SQL(f" {expr.operator} ") + rhs_sql + sql.SQL(")")
+    if isinstance(expr, F):
+        if isinstance(expr.name, BoundColumnRef):
+            return _compile_value(
+                expr.name, table, params, table_for_column, model, rhs_model, annotations, aliases
+            )
+        combined = {**(aliases or {}), **(annotations or {})}
+        resolved = combined.get(expr.name)
+        if resolved is not None:
+            return _compile_value(
+                resolved, table, params, table_for_column, model, rhs_model, annotations, aliases
+            )
+        raise ValueError(f"Unknown annotation/alias: {expr.name!r}")
     # Literal
     params.append(expr)
     return sql.Placeholder()
@@ -429,12 +545,17 @@ def _compile_expression(
     # F or Func: compile as value expression (e.g. CONCAT(...) ILIKE '%x%')
     lhs_part: sql.Composable | None = None
     if isinstance(lhs, F):
-        resolved = combined.get(lhs.name)
-        if resolved is None:
-            raise ValueError(f"Unknown annotation/alias: {lhs.name!r}")
-        lhs_part = _compile_value(
-            resolved, table, params, table_for_column, model, rhs_model, ann, al
-        )
+        if isinstance(lhs.name, BoundColumnRef):
+            lhs_part = _compile_value(
+                lhs.name, table, params, table_for_column, model, rhs_model, ann, al
+            )
+        else:
+            resolved = combined.get(lhs.name)
+            if resolved is None:
+                raise ValueError(f"Unknown annotation/alias: {lhs.name!r}")
+            lhs_part = _compile_value(
+                resolved, table, params, table_for_column, model, rhs_model, ann, al
+            )
     elif isinstance(lhs, Func):
         lhs_part = _compile_value(
             lhs, table, params, table_for_column, model, rhs_model, ann, al
@@ -570,7 +691,7 @@ def _compile_subquery_sql(
     table = _table_name(model)
     schema = getattr(qs, "_schema", None)
 
-    select_list = _select_list_for_queryset(qs)
+    select_list = _select_list_for_queryset(qs, params)
 
     # Auto-add JOINs for filters
     existing_rhs = {j.rhs_model for j in qs._joins if getattr(j, "rhs_model", None) is not None}
@@ -679,7 +800,7 @@ def _compile_subquery_sql(
 
 
 def _collect_bound_column_refs(expr: Any) -> list[BoundColumnRef]:
-    """Recursively collect all BoundColumnRefs from an expression (filter/order)."""
+    """Recursively collect all BoundColumnRefs from an expression (filter/order/aggregate)."""
     refs: list[BoundColumnRef] = []
     if isinstance(expr, BoundColumnRef):
         refs.append(expr)
@@ -694,6 +815,10 @@ def _collect_bound_column_refs(expr: Any) -> list[BoundColumnRef]:
     elif isinstance(expr, OrExpression):
         for e in expr.expressions:
             refs.extend(_collect_bound_column_refs(e))
+    elif isinstance(expr, Func):
+        for a in expr.args:
+            refs.extend(_collect_bound_column_refs(a))
+    # str: no refs
     return refs
 
 
@@ -771,7 +896,7 @@ def _compile_subquery_sql(
     table = _table_name(model)
     schema = getattr(qs, "_schema", None)
 
-    select_list = _select_list_for_queryset(qs)
+    select_list = _select_list_for_queryset(qs, params)
 
     existing_rhs = {j.rhs_model for j in qs._joins if getattr(j, "rhs_model", None) is not None}
     agg_refs: list[BoundColumnRef] = []
@@ -918,7 +1043,7 @@ def _compile_subquery_sql(
     table = _table_name(model)
     schema = getattr(qs, "_schema", None)
 
-    select_list = _select_list_for_queryset(qs)
+    select_list = _select_list_for_queryset(qs, params)
 
     existing_rhs = {j.rhs_model for j in qs._joins if getattr(j, "rhs_model", None) is not None}
     agg_refs: list[BoundColumnRef] = []
@@ -1024,6 +1149,57 @@ def _compile_subquery_sql(
     return sql.Composed(parts)
 
 
+def _is_view_model(model: type[Any]) -> bool:
+    """Return True if model is a view (has __queryset__ or __query__)."""
+    from pgstorm.views import BaseView
+    return (
+        isinstance(model, type)
+        and issubclass(model, BaseView)
+        and (getattr(model, "__queryset__", None) is not None or getattr(model, "__query__", None) is not None)
+    )
+
+
+def _build_view_subquery(model: type[Any], params: List[Any], schema: str | None) -> tuple[sql.Composable, List[Any]]:
+    """
+    Build the subquery SQL for a view model from __queryset__ or __query__.
+    Returns (sql_composable, subquery_params).
+    """
+    from pgstorm.queryset.base import QuerySet
+
+    sub_params: List[Any] = []
+    queryset_def = getattr(model, "__queryset__", None)
+    query_def = getattr(model, "__query__", None)
+
+    if queryset_def is not None:
+        sub_qs = queryset_def() if callable(queryset_def) else queryset_def
+        if not isinstance(sub_qs, QuerySet):
+            raise TypeError(f"{model.__name__}.__queryset__ must be a QuerySet or callable returning QuerySet")
+        # Apply schema: query-level using_schema() overrides view-level __schema__
+        effective_schema = schema or getattr(model, "__schema__", None)
+        if effective_schema is not None:
+            sub_qs = sub_qs.using_schema(effective_schema)
+        sub_compiled = compile_queryset(sub_qs)
+        sub_params.extend(sub_compiled.params)
+        sub_sql = sub_compiled.sql
+    elif query_def is not None:
+        # __query__: raw SQL string, or (sql_string, params) for parameterized
+        effective_schema = schema or getattr(model, "__schema__", None)
+        if isinstance(query_def, tuple):
+            raw_sql = query_def[0]
+            sub_params.extend(query_def[1])
+        else:
+            raw_sql = query_def
+        # Substitute {schema} placeholder with properly-quoted schema identifier
+        if effective_schema is not None and "{schema}" in raw_sql:
+            schema_quoted = '"' + effective_schema.replace('"', '""') + '"'
+            raw_sql = raw_sql.replace("{schema}", schema_quoted)
+        sub_sql = sql.SQL(raw_sql)
+    else:
+        raise ValueError(f"{model.__name__} must define __queryset__ or __query__")
+
+    return sub_sql, sub_params
+
+
 def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
     """
     Compile a QuerySet into a parameterised SELECT statement.
@@ -1036,6 +1212,7 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
       - offset()
       - defer()/explicit column selection when available on the model
       - joins (LEFT/RIGHT/INNER/FULL/LATERAL)
+      - view models (BaseView with __queryset__ or __query__) as subquery/CTE
     """
 
     model = qs.model
@@ -1059,19 +1236,30 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
             joins_to_use.append(j)
             existing_rhs.add(j.rhs_model)
 
-    query_parts: list[sql.Composable] = []
-    params: list[Any] = []
+    # Build FROM clause: table or (subquery) AS alias
+    is_view = _is_view_model(model)
+    is_cte = is_view and getattr(model, "__is_cte__", False)
 
-    # SELECT [DISTINCT] <columns> FROM <table>
+    if is_view:
+        sub_sql, sub_params = _build_view_subquery(model, params, schema)
+        if is_cte:
+            from_clause = sql.Identifier(table)
+        else:
+            params.extend(sub_params)
+            from_clause = sql.SQL("(") + sub_sql + sql.SQL(") AS ") + sql.Identifier(table)
+    else:
+        from_clause = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+
+    # SELECT [DISTINCT] <columns> FROM <table|subquery>
+    if is_cte:
+        # WITH cte_name AS (subquery) SELECT ... FROM cte_name
+        query_parts.insert(0, sql.SQL("WITH ") + sql.Identifier(table) + sql.SQL(" AS (") + sub_sql + sql.SQL(") "))
     query_parts.append(sql.SQL("SELECT "))
     if qs._distinct:
         query_parts.append(sql.SQL("DISTINCT "))
     query_parts.append(select_list)
     query_parts.append(sql.SQL(" FROM "))
-    if schema:
-        query_parts.append(sql.Identifier(schema, table))
-    else:
-        query_parts.append(sql.Identifier(table))
+    query_parts.append(from_clause)
 
     # JOINs
     for join in joins_to_use:
@@ -1178,8 +1366,14 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
         query_parts.append(sql.SQL(" OFFSET ") + sql.Placeholder())
         params.append(int(qs._offset))
 
+    # For CTE: subquery params must come first (in WITH clause)
+    if is_view and is_cte:
+        params = sub_params + params
+
     query = sql.Composed(query_parts)
-    return CompiledQuery(sql=query, params=params)
+    return CompiledQuery(
+        sql=query, params=params, action="fetch", model=model, table=table
+    )
 
 
 # --- DML: INSERT, UPDATE, DELETE ---
@@ -1257,6 +1451,7 @@ def compile_insert(
     schema: str | None = None,
     *,
     returning: bool = True,
+    extra: dict[str, Any] | None = None,
 ) -> CompiledQuery:
     """
     Compile INSERT for one or more rows.
@@ -1293,7 +1488,15 @@ def compile_insert(
     )
     if returning:
         query = query + sql.SQL(" RETURNING *")
-    return CompiledQuery(sql=query, params=params)
+    action = "bulk_create" if len(rows_data) > 1 else "create"
+    return CompiledQuery(
+        sql=query,
+        params=params,
+        action=action,
+        model=model,
+        table=table,
+        extra=extra,
+    )
 
 
 def compile_update_one(
@@ -1303,6 +1506,7 @@ def compile_update_one(
     schema: str | None = None,
     *,
     returning: bool = True,
+    extra: dict[str, Any] | None = None,
 ) -> CompiledQuery:
     """Compile UPDATE for a single row by primary key. If returning=True, adds RETURNING *."""
     table = _table_name(model)
@@ -1347,7 +1551,14 @@ def compile_update_one(
     )
     if returning:
         query = query + sql.SQL(" RETURNING *")
-    return CompiledQuery(sql=query, params=params)
+    return CompiledQuery(
+        sql=query,
+        params=params,
+        action="update",
+        model=model,
+        table=table,
+        extra=extra,
+    )
 
 
 def compile_bulk_update(
@@ -1355,6 +1566,8 @@ def compile_bulk_update(
     rows_data: list[dict[str, Any]],
     fields: list[str],
     schema: str | None = None,
+    *,
+    extra: dict[str, Any] | None = None,
 ) -> CompiledQuery:
     """
     Compile bulk UPDATE using CASE WHEN for efficiency.
@@ -1417,7 +1630,14 @@ def compile_bulk_update(
         + in_placeholders
         + sql.SQL(")")
     )
-    return CompiledQuery(sql=query, params=params)
+    return CompiledQuery(
+        sql=query,
+        params=params,
+        action="bulk_update",
+        model=model,
+        table=table,
+        extra=extra,
+    )
 
 
 def compile_delete_by_pk(model: type[Any], pk_value: Any, schema: str | None = None) -> CompiledQuery:
@@ -1443,7 +1663,9 @@ def compile_delete_by_pk(model: type[Any], pk_value: Any, schema: str | None = N
         + sql.SQL(" = ")
         + sql.Placeholder()
     )
-    return CompiledQuery(sql=query, params=params)
+    return CompiledQuery(
+        sql=query, params=params, action="delete", model=model, table=table
+    )
 
 
 def compile_delete_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
@@ -1489,7 +1711,9 @@ def compile_delete_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
             + sub_compiled.sql
             + sql.SQL(")")
         )
-        return CompiledQuery(sql=query, params=params)
+        return CompiledQuery(
+            sql=query, params=params, action="delete", model=model, table=table
+        )
 
     # No joins: simple DELETE FROM t WHERE ...
     params: list[Any] = []
@@ -1509,7 +1733,9 @@ def compile_delete_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
             where_fragments.append(frag)
         query_parts.append(sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_fragments))
     query = sql.Composed(query_parts)
-    return CompiledQuery(sql=query, params=params)
+    return CompiledQuery(
+        sql=query, params=params, action="delete", model=model, table=table
+    )
 
 
 def compile_queryset_update(qs: "QuerySet[Any]", updates: dict[str, Any]) -> CompiledQuery:
@@ -1575,7 +1801,9 @@ def compile_queryset_update(qs: "QuerySet[Any]", updates: dict[str, Any]) -> Com
             + sub_compiled.sql
             + sql.SQL(")")
         )
-        return CompiledQuery(sql=query, params=params)
+        return CompiledQuery(
+            sql=query, params=params, action="update", model=model, table=table
+        )
 
     # No joins: UPDATE table SET ... WHERE ...
     query_parts: list[sql.Composable] = [
@@ -1595,4 +1823,6 @@ def compile_queryset_update(qs: "QuerySet[Any]", updates: dict[str, Any]) -> Com
             where_fragments.append(frag)
         query_parts.append(sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_fragments))
     query = sql.Composed(query_parts)
-    return CompiledQuery(sql=query, params=params)
+    return CompiledQuery(
+        sql=query, params=params, action="update", model=model, table=table
+    )

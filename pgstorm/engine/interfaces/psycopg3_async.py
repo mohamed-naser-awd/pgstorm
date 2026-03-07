@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union
+from typing import Any, Union
 
-from pgstorm.engine.interface import EngineInterface
-
-if TYPE_CHECKING:
-    from pgstorm.queryset.parser import CompiledQuery
+from pgstorm.engine.interface import CompiledOrRaw, EngineInterface
+from pgstorm.observers import (
+    CONNECTION_OPEN,
+    CURSOR_CLOSE,
+    CURSOR_OPEN,
+    ObserverContext,
+    notify,
+)
 
 
 class Psycopg3AsyncInterface(EngineInterface):
@@ -33,17 +37,22 @@ class Psycopg3AsyncInterface(EngineInterface):
                 self._conn = await psycopg.AsyncConnection.connect(
                     conninfo="", **{**self._conninfo, **self._kwargs}
                 )
+            notify(ObserverContext(action=CONNECTION_OPEN, extra={"connection": self._conn}))
         return self._conn
 
-    async def execute(self, compiled: "CompiledQuery") -> list[Any]:
+    async def execute(self, compiled: CompiledOrRaw) -> list[Any]:
         conn = await self._get_conn()
         async with conn.cursor() as cur:
-            await cur.execute(compiled.sql, compiled.params)
-            if cur.description:
-                columns = [d.name for d in cur.description]
-                rows = await cur.fetchall()
-                return [dict(zip(columns, row)) for row in rows]
-        return []
+            notify(ObserverContext(action=CURSOR_OPEN, extra={"cursor": cur}))
+            try:
+                await cur.execute(compiled.sql, compiled.params)
+                if cur.description:
+                    columns = [d.name for d in cur.description]
+                    rows = await cur.fetchall()
+                    return [dict(zip(columns, row)) for row in rows]
+                return []
+            finally:
+                notify(ObserverContext(action=CURSOR_CLOSE, extra={"cursor": cur}))
 
     async def begin(self) -> None:
         conn = await self._get_conn()

@@ -14,3 +14,9 @@ ILIKE = "ILIKE"
 
 IN = "IN"
 IS = "IS"
+
+# Arithmetic (for annotate expressions)
+ADD = "+"
+SUB = "-"
+MUL = "*"
+DIV = "/"

@@ -58,7 +58,13 @@ class BaseModel:
             row_data = {k: v for k, v in row_data.items() if k != db_pk}
         if not row_data:
             raise ValueError("No columns to insert")
-        compiled = compile_insert(model, [row_data], schema=schema, returning=True)
+        compiled = compile_insert(
+            model,
+            [row_data],
+            schema=schema,
+            returning=True,
+            extra={"instance": self, "objs": [self]},
+        )
 
         def then(result: list | None) -> Self:
             if result and len(result) == 1:
@@ -102,7 +108,14 @@ class BaseModel:
             )
 
         row_data = _instance_to_row_data(self, model, include_pk=True)
-        compiled = compile_update_one(model, row_data, pk_value, schema=schema, returning=True)
+        compiled = compile_update_one(
+            model,
+            row_data,
+            pk_value,
+            schema=schema,
+            returning=True,
+            extra={"instance": self},
+        )
 
         def then(result: list | None) -> Self:
             if result and len(result) == 1:
