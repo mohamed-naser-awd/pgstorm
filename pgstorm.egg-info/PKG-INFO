@@ -20,11 +20,18 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: psycopg[binary]>=3.0
 Provides-Extra: psycopg2
-Requires-Dist: psycopg2-binary; extra == "psycopg2"
+Requires-Dist: psycopg2; extra == "psycopg2"
+Provides-Extra: psycopg2-binary
+Requires-Dist: psycopg2-binary; extra == "psycopg2-binary"
+Provides-Extra: psycopg3
+Requires-Dist: psycopg>=3.0; extra == "psycopg3"
+Provides-Extra: psycopg3-binary
+Requires-Dist: psycopg[binary]>=3.0; extra == "psycopg3-binary"
 Provides-Extra: asyncpg
 Requires-Dist: asyncpg; extra == "asyncpg"
 Provides-Extra: all
 Requires-Dist: psycopg2-binary; extra == "all"
+Requires-Dist: psycopg[binary]>=3.0; extra == "all"
 Requires-Dist: asyncpg; extra == "all"
 
 # pgstorm
@@ -60,9 +67,16 @@ pip install pgstorm
 This installs pgstorm with **psycopg3** (the default driver). To use a different driver:
 
 ```bash
-pip install pgstorm[psycopg2]   # psycopg2 (sync)
-pip install pgstorm[asyncpg]    # asyncpg (async)
-pip install pgstorm[all]        # all drivers
+# psycopg2: choose normal (requires libpq) or binary (pre-built)
+pip install pgstorm[psycopg2]        # psycopg2 (sync, normal build)
+pip install pgstorm[psycopg2-binary] # psycopg2-binary (sync, pre-built)
+
+# psycopg3: choose normal or binary (default uses binary)
+pip install pgstorm[psycopg3]        # psycopg3 (normal build)
+pip install pgstorm[psycopg3-binary] # psycopg3 binary (pre-built)
+
+pip install pgstorm[asyncpg]         # asyncpg (async)
+pip install pgstorm[all]             # all drivers (binary variants)
 ```
 
 **From source**: `pip install -e .` or `pip install -e ".[asyncpg]"`

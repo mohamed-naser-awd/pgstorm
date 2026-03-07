@@ -2,10 +2,20 @@ psycopg[binary]>=3.0
 
 [all]
 psycopg2-binary
+psycopg[binary]>=3.0
 asyncpg
 
 [asyncpg]
 asyncpg
 
 [psycopg2]
+psycopg2
+
+[psycopg2-binary]
 psycopg2-binary
+
+[psycopg3]
+psycopg>=3.0
+
+[psycopg3-binary]
+psycopg[binary]>=3.0
