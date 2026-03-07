@@ -79,10 +79,18 @@ def _table_name(model: type[Any]) -> str:
 def _iter_model_columns(model: type[Any]) -> Iterable[tuple[str, Column]]:
     """
     Yield (attribute_name, Column) for each field on the model (including base classes).
-    Uses the model's attribute name as the column name so we never rely on empty column.name.
+    Uses model.fields when available; otherwise falls back to scanning vars(cls).
     """
 
     from pgstorm.columns.base import Field
+
+    fields = getattr(model, "fields", None)
+    if fields is not None:
+        for attr_name, field in fields.items():
+            column = field.get_column()
+            if column is not None:
+                yield (attr_name, column)
+        return
 
     seen: set[str] = set()
     for cls in model.__mro__:
@@ -293,7 +301,7 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
         selected_names = [name for name in selected_names if name not in excluded]
 
     if not selected_names:
-        selected_names = list(model.__annotations__.keys())
+        selected_names = list(getattr(model, "fields", model.__annotations__).keys())
 
     # Use actual DB column name (e.g. user_id for FK) not attr name (user)
     parts: list[sql.Composable] = []

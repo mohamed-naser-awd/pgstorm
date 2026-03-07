@@ -6,13 +6,17 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Union
 
 from pgstorm.engine.context import engine as engine_context_var, in_transaction as in_transaction_var
+from pgstorm.engine.observer_runner import (
+    run_after_execute,
+    run_before_execute,
+    run_after_execute_async,
+    run_before_execute_async,
+)
 from pgstorm.engine.query_utils import composable_to_plain
 from pgstorm.observers import (
     ObserverContext,
     notify,
-    QUERY_AFTER_EXECUTE,
-    QUERY_BEFORE_EXECUTE,
-    RAW_SQL,
+    notify_async,
     TRANSACTION_BEGIN,
     TRANSACTION_COMMIT,
     TRANSACTION_ROLLBACK,
@@ -40,84 +44,19 @@ class BaseEngine(ABC):
         Execute a compiled query. Returns rows or coroutine for async.
         Developer uses await when interface is async.
         """
-        action = getattr(compiled, "action", "query")
-        model = getattr(compiled, "model", None)
-        table = getattr(compiled, "table", None)
-        extra = getattr(compiled, "extra", None) or {}
-
-        ctx_before = ObserverContext(
-            action=QUERY_BEFORE_EXECUTE,
-            model=model,
-            table=table,
-            compiled=compiled,
-            params=getattr(compiled, "params", []),
-            extra={"query_action": action, **extra},
-        )
-        notify(ctx_before)
-
-        # Notify action-specific observers (fetch, create, update, delete, etc.)
-        ctx_action_before = ObserverContext(
-            action=action,
-            model=model,
-            table=table,
-            compiled=compiled,
-            params=getattr(compiled, "params", []),
-            extra=extra,
-        )
-        notify(ctx_action_before)
-
-        result = self._interface.execute(compiled)
-
         if self._interface.is_async:
 
             async def _execute_with_observers() -> Any:
-                resolved = await result
-                # Notify action-specific observers with result
-                ctx_action_after = ObserverContext(
-                    action=action,
-                    model=model,
-                    table=table,
-                    compiled=compiled,
-                    params=getattr(compiled, "params", []),
-                    result=resolved,
-                    extra=extra,
-                )
-                notify(ctx_action_after)
-                ctx_after = ObserverContext(
-                    action=QUERY_AFTER_EXECUTE,
-                    model=model,
-                    table=table,
-                    compiled=compiled,
-                    params=getattr(compiled, "params", []),
-                    result=resolved,
-                    extra={"query_action": action, **extra},
-                )
-                notify(ctx_after)
+                await run_before_execute_async(compiled)
+                resolved = await self._interface.execute(compiled)
+                await run_after_execute_async(compiled, resolved)
                 return resolved
 
             return _execute_with_observers()
 
-        # Notify action-specific observers with result
-        ctx_action_after = ObserverContext(
-            action=action,
-            model=model,
-            table=table,
-            compiled=compiled,
-            params=getattr(compiled, "params", []),
-            result=result,
-            extra=extra,
-        )
-        notify(ctx_action_after)
-        ctx_after = ObserverContext(
-            action=QUERY_AFTER_EXECUTE,
-            model=model,
-            table=table,
-            compiled=compiled,
-            params=getattr(compiled, "params", []),
-            result=result,
-            extra={"query_action": action, **extra},
-        )
-        notify(ctx_after)
+        run_before_execute(compiled)
+        result = self._interface.execute(compiled)
+        run_after_execute(compiled, result)
         return result
 
     def raw_execute(self, query: str, params: list[Any] | None = None) -> Any:
@@ -167,6 +106,13 @@ class BaseEngine(ABC):
 
     def begin(self) -> Any:
         """Begin transaction. Returns coroutine for async."""
+        if self._interface.is_async:
+
+            async def _begin_with_observer() -> None:
+                await notify_async(ObserverContext(action=TRANSACTION_BEGIN))
+                await self._interface.begin()
+
+            return _begin_with_observer()
         notify(ObserverContext(action=TRANSACTION_BEGIN))
         return self._interface.begin()
 
@@ -177,7 +123,7 @@ class BaseEngine(ABC):
 
             async def _commit_with_observer() -> Any:
                 await result
-                notify(ObserverContext(action=TRANSACTION_COMMIT))
+                await notify_async(ObserverContext(action=TRANSACTION_COMMIT))
                 return None
 
             return _commit_with_observer()
@@ -191,7 +137,7 @@ class BaseEngine(ABC):
 
             async def _rollback_with_observer() -> Any:
                 await result
-                notify(ObserverContext(action=TRANSACTION_ROLLBACK))
+                await notify_async(ObserverContext(action=TRANSACTION_ROLLBACK))
                 return None
 
             return _rollback_with_observer()

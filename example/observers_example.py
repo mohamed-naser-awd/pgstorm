@@ -8,11 +8,8 @@ Run with: python -m example.observers_example
 from pgstorm import ObserverContext, observers, table_observers
 from pgstorm.observers import (
     FETCH,
-    CREATE,
-    BULK_CREATE,
-    UPDATE,
-    BULK_UPDATE,
-    DELETE,
+    POST_CREATE,
+    POST_SAVE,
     RAW_SQL,
     CONNECTION_OPEN,
     CURSOR_OPEN,
@@ -32,11 +29,11 @@ def on_any_fetch(ctx: ObserverContext) -> None:
     print(f"[fetch] table={ctx.table}, model={ctx.model}")
 
 
-# Table-specific observer - only for User creates
-@table_observers(action=CREATE, table=User)
+# Table-specific observer - only for User creates (no model check needed)
+@table_observers(action=POST_CREATE, table=User)
 def on_user_create(ctx: ObserverContext) -> None:
     instance = ctx.extra.get("instance")
-    print(f"[create] User: {instance}")
+    print(f"[post_create] User: {instance}")
 
 
 # Global observer for all queries (before execution)

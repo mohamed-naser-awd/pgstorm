@@ -3,13 +3,54 @@ from __future__ import annotations
 from typing import Any, Awaitable, ClassVar, Self, TYPE_CHECKING, overload
 
 if TYPE_CHECKING:
+    from pgstorm.columns.base import Field
     from pgstorm.queryset.base import QuerySet
 
 
-class BaseModel:
-    """Base for all pgstorm models. Maps type annotations to Field descriptors in __init_subclass__."""
+class ModelMeta(type):
+    """Metaclass for pgstorm models. Maps type annotations to Field descriptors and builds cls.fields."""
+
+    def __new__(mcs, name: str, bases: tuple, namespace: dict[str, Any]) -> type:
+        cls = super().__new__(mcs, name, bases, namespace)
+        from pgstorm.columns.base import Field
+
+        fields: dict[str, Any] = {}
+        for base in reversed(cls.__mro__):
+            if base is object:
+                continue
+            ann = getattr(base, "__annotations__", {})
+            for attr_name, field_annotation in ann.items():
+                if attr_name.startswith("_"):
+                    continue
+                if attr_name in fields:
+                    continue
+                if attr_name in base.__dict__:
+                    val = base.__dict__[attr_name]
+                    if isinstance(val, Field):
+                        fields[attr_name] = val
+                        continue
+                descriptor = Field.generate_descriptor(field_annotation)
+                if descriptor is not None:
+                    setattr(cls, attr_name, descriptor)
+                    if hasattr(descriptor, "__set_name__"):
+                        descriptor.__set_name__(cls, attr_name)
+                    fields[attr_name] = descriptor
+
+        cls.fields = fields
+
+        if cls.__name__ != "BaseModel" and "objects" not in cls.__dict__:
+            from pgstorm.queryset.base import QuerySetWrapper
+
+            cls.objects = QuerySetWrapper()
+
+        return cls
+
+
+class BaseModel(metaclass=ModelMeta):
+    """Base for all pgstorm models. Maps type annotations to Field descriptors via ModelMeta metaclass. cls.fields is a dict of field_name -> Field."""
 
     objects: ClassVar[QuerySet[Self]]
+    fields: ClassVar[dict[str, Field]]
 
     def __init__(self, **kwargs: Any) -> None:
         """Accept keyword args for Model.objects.create(**kwargs) and manual instantiation."""
@@ -19,7 +60,9 @@ class BaseModel:
         valid_names = {attr for attr, _ in _iter_model_columns(model)}
         for name, value in kwargs.items():
             if name not in valid_names:
-                raise TypeError(f"{model.__name__}() got an unexpected keyword argument {name!r}")
+                raise TypeError(
+                    f"{model.__name__}() got an unexpected keyword argument {name!r}"
+                )
             setattr(self, name, value)
 
     @overload
@@ -72,9 +115,11 @@ class BaseModel:
             return self
 
         if eng.is_async:
+
             async def _run() -> Self:
                 result = await eng.execute(compiled)
                 return then(result)
+
             return _run()
         return then(eng.execute(compiled))
 
@@ -97,9 +142,13 @@ class BaseModel:
 
         model = type(self)
         pk_attr = _model_primary_key_field(model)
-        pk_value = getattr(self, f"_pgstorm_value_{pk_attr}", None) or getattr(self, pk_attr, None)
+        pk_value = getattr(self, f"_pgstorm_value_{pk_attr}", None) or getattr(
+            self, pk_attr, None
+        )
         if pk_value is None:
-            raise ValueError(f"Cannot update: {pk_attr} is None. Instance must be persisted first.")
+            raise ValueError(
+                f"Cannot update: {pk_attr} is None. Instance must be persisted first."
+            )
 
         eng = engine_context_var.get()
         if eng is None:
@@ -123,17 +172,23 @@ class BaseModel:
             return self
 
         if eng.is_async:
+
             async def _run() -> Self:
                 result = await eng.execute(compiled)
                 return then(result)
+
             return _run()
         return then(eng.execute(compiled))
 
     @overload
     def refresh_from_db(self: Self, *, schema: str | None = None) -> Self: ...
     @overload
-    def refresh_from_db(self: Self, *, schema: str | None = None) -> Awaitable[Self]: ...
-    def refresh_from_db(self: Self, *, schema: str | None = None) -> Self | Awaitable[Self]:
+    def refresh_from_db(
+        self: Self, *, schema: str | None = None
+    ) -> Awaitable[Self]: ...
+    def refresh_from_db(
+        self: Self, *, schema: str | None = None
+    ) -> Self | Awaitable[Self]:
         """
         Reload this instance from the database. With sync engine returns Self; with async returns Awaitable[Self] — use await.
         Instance must have a non-None primary key. Raises RuntimeError if the record no longer exists.
@@ -147,9 +202,13 @@ class BaseModel:
 
         model = type(self)
         pk_attr = _model_primary_key_field(model)
-        pk_value = getattr(self, f"_pgstorm_value_{pk_attr}", None) or getattr(self, pk_attr, None)
+        pk_value = getattr(self, f"_pgstorm_value_{pk_attr}", None) or getattr(
+            self, pk_attr, None
+        )
         if pk_value is None:
-            raise ValueError(f"Cannot refresh: {pk_attr} is None. Instance must be persisted first.")
+            raise ValueError(
+                f"Cannot refresh: {pk_attr} is None. Instance must be persisted first."
+            )
 
         eng = engine_context_var.get()
         if eng is None:
@@ -168,14 +227,18 @@ class BaseModel:
 
         def then(rows: list | None) -> Self:
             if not rows:
-                raise RuntimeError(f"Record with {pk_attr}={pk_value} no longer exists.")
+                raise RuntimeError(
+                    f"Record with {pk_attr}={pk_value} no longer exists."
+                )
             _apply_row_to_instance(self, rows[0], model)
             return self
 
         if eng.is_async:
+
             async def _run() -> Self:
                 rows = await eng.execute(compiled)
                 return then(rows)
+
             return _run()
         return then(eng.execute(compiled))
 
@@ -194,9 +257,13 @@ class BaseModel:
 
         model = type(self)
         pk_attr = _model_primary_key_field(model)
-        pk_value = getattr(self, f"_pgstorm_value_{pk_attr}", None) or getattr(self, pk_attr, None)
+        pk_value = getattr(self, f"_pgstorm_value_{pk_attr}", None) or getattr(
+            self, pk_attr, None
+        )
         if pk_value is None:
-            raise ValueError(f"Cannot delete: {pk_attr} is None. Instance must be persisted first.")
+            raise ValueError(
+                f"Cannot delete: {pk_attr} is None. Instance must be persisted first."
+            )
 
         eng = engine_context_var.get()
         if eng is None:
@@ -206,8 +273,10 @@ class BaseModel:
 
         compiled = compile_delete_by_pk(model, pk_value, schema=schema)
         if eng.is_async:
+
             async def _run() -> None:
                 await eng.execute(compiled)
+
             return _run()
         eng.execute(compiled)
         return None
@@ -216,28 +285,9 @@ class BaseModel:
     def __get__(self, obj: None, objtype: type | None = None) -> type[Self]: ...
     @overload
     def __get__(self, obj: object, objtype: type | None = None) -> Self: ...
-    def __get__(self, obj: object | None, objtype: type | None = None) -> type[Self] | Self:
+    def __get__(
+        self, obj: object | None, objtype: type | None = None
+    ) -> type[Self] | Self:
         if obj is None:
             return self  # type: ignore[return-value]
         return obj  # type: ignore[return-value]
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        from pgstorm.columns.base import Field
-
-        annotations = getattr(cls, "__annotations__", {})
-        for name, field_annotation in annotations.items():
-            if name.startswith("_"):
-                continue
-            descriptor = Field.generate_descriptor(field_annotation)
-            if descriptor is not None:
-                setattr(cls, name, descriptor)
-                # Descriptors added via setattr don't get __set_name__ from the metaclass,
-                # so we must call it explicitly (needed for RelationField's user_id column).
-                if hasattr(descriptor, "__set_name__"):
-                    descriptor.__set_name__(cls, name)
-
-        if "objects" not in cls.__dict__:
-            from pgstorm.queryset.base import QuerySetWrapper
-
-            cls.objects = QuerySetWrapper()
