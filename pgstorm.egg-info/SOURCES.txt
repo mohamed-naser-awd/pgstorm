@@ -34,6 +34,7 @@ pgstorm/engine/base.py
 pgstorm/engine/context.py
 pgstorm/engine/create.py
 pgstorm/engine/interface.py
+pgstorm/engine/observer_runner.py
 pgstorm/engine/query_utils.py
 pgstorm/engine/interfaces/__init__.py
 pgstorm/engine/interfaces/asyncpg.py
