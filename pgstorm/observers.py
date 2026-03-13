@@ -31,6 +31,12 @@ from typing import Any, Callable, Literal, Type
 # Callbacks can be sync or async; notify_async will await async callbacks
 ObserverCallback = Callable[["ObserverContext"], None]
 
+# Optional per-observer filter. If provided, the callback is only invoked when
+# the filter returns True for the current context. This allows filtering by
+# arbitrary flags (for example, values in ctx.extra) or any other context
+# attributes in addition to the action/table matching done by the registry.
+ObserverFilter = Callable[["ObserverContext"], bool]
+
 # Valid observer actions (for type hints)
 ObserverAction = Literal[
     "fetch",
@@ -145,6 +151,7 @@ class _ObserverEntry:
     action: str
     callback: ObserverCallback
     table: type[Any] | None = None  # None = global, else table-specific
+    observer_filter: ObserverFilter | None = None
 
 
 class ObserverRegistry:
@@ -153,50 +160,58 @@ class ObserverRegistry:
     def __init__(self) -> None:
         self._observers: list[_ObserverEntry] = []
 
+    def _iter_results(self, ctx: ObserverContext):
+        """Yield callback results for observers matching the context's action and table."""
+        for entry in self._observers:
+            if entry.action != ctx.action:
+                continue
+            if entry.table is not None:
+                if ctx.model is None or not issubclass(ctx.model, entry.table):
+                    continue
+            if entry.observer_filter is not None and not entry.observer_filter(ctx):
+                continue
+            yield entry.callback(ctx)
+
     def register(
         self,
         action: str,
         callback: ObserverCallback,
         table: type[Any] | None = None,
+        observer_filter: ObserverFilter | None = None,
     ) -> None:
         if action not in ALL_ACTIONS:
             raise ValueError(
                 f"Unknown action {action!r}. Valid actions: {sorted(ALL_ACTIONS)}"
             )
-        self._observers.append(_ObserverEntry(action=action, callback=callback, table=table))
+        self._observers.append(
+            _ObserverEntry(
+                action=action,
+                callback=callback,
+                table=table,
+                observer_filter=observer_filter,
+            )
+        )
 
     def notify(self, ctx: ObserverContext) -> None:
         """Call all observers matching the context's action and table."""
-        for entry in self._observers:
-            if entry.action != ctx.action:
-                continue
-            if entry.table is not None:
-                if ctx.model is None or not issubclass(ctx.model, entry.table):
-                    continue
-            try:
-                result = entry.callback(ctx)
+        try:
+            for result in self._iter_results(ctx):
                 if result is not None and asyncio.iscoroutine(result):
                     raise RuntimeError(
                         "Async observer used with sync engine. Use async engine (create_engine(..., interface='asyncpg')) "
                         "or register a sync observer."
                     )
-            except Exception:
-                raise  # Let observers propagate their errors
+        except Exception:
+            raise  # Let observers propagate their errors
 
     async def notify_async(self, ctx: ObserverContext) -> None:
         """Call all observers; await any that return a coroutine (sync or async observers)."""
-        for entry in self._observers:
-            if entry.action != ctx.action:
-                continue
-            if entry.table is not None:
-                if ctx.model is None or not issubclass(ctx.model, entry.table):
-                    continue
-            try:
-                result = entry.callback(ctx)
+        try:
+            for result in self._iter_results(ctx):
                 if result is not None and asyncio.iscoroutine(result):
                     await result
-            except Exception:
-                raise  # Let observers propagate their errors
+        except Exception:
+            raise  # Let observers propagate their errors
 
 
 # Global registry
@@ -221,22 +236,151 @@ def observers(action: ObserverAction | str):
     return decorator
 
 
-def table_observers(action: ObserverAction | str, table: type[Any]):
+def table_observers(action: ObserverAction | str | None, table: type[Any]):
     """
     Decorator for table-specific observers.
     Registry filters by (action, table)—no model checking needed in your callback.
+
+    If ``action`` is None, the observer is registered for **all** actions for
+    the given table.
 
     Usage:
         @pgstorm.table_observers(action="post_save", table=User)
         def on_user_saved(ctx):
             print(f"Saved user: {ctx.extra.get('instance')}")
+
+        # Called for any action on User
+        @pgstorm.table_observers(action=None, table=User)
+        def on_any_user_event(ctx):
+            ...
     """
 
     def decorator(func: ObserverCallback) -> ObserverCallback:
-        _registry.register(action, func, table=table)
+        if action is None:
+            # Register the same callback for all actions for this table
+            for a in ALL_ACTIONS:
+                _registry.register(a, func, table=table)
+        else:
+            _registry.register(action, func, table=table)
         return func
 
     return decorator
+
+
+# Convenience wrappers for common global observer actions
+def on_fetch(func: ObserverCallback) -> ObserverCallback:
+    """Register a global fetch observer."""
+    return observers(action=FETCH)(func)
+
+
+def on_pre_save(func: ObserverCallback) -> ObserverCallback:
+    """Register a global pre_save observer."""
+    return observers(action=PRE_SAVE)(func)
+
+
+def on_post_save(func: ObserverCallback) -> ObserverCallback:
+    """Register a global post_save observer."""
+    return observers(action=POST_SAVE)(func)
+
+
+def on_pre_create(func: ObserverCallback) -> ObserverCallback:
+    """Register a global pre_create observer."""
+    return observers(action=PRE_CREATE)(func)
+
+
+def on_post_create(func: ObserverCallback) -> ObserverCallback:
+    """Register a global post_create observer."""
+    return observers(action=POST_CREATE)(func)
+
+
+def on_pre_bulk_create(func: ObserverCallback) -> ObserverCallback:
+    """Register a global pre_bulk_create observer."""
+    return observers(action=PRE_BULK_CREATE)(func)
+
+
+def on_post_bulk_create(func: ObserverCallback) -> ObserverCallback:
+    """Register a global post_bulk_create observer."""
+    return observers(action=POST_BULK_CREATE)(func)
+
+
+def on_pre_update(func: ObserverCallback) -> ObserverCallback:
+    """Register a global pre_update observer."""
+    return observers(action=PRE_UPDATE)(func)
+
+
+def on_post_update(func: ObserverCallback) -> ObserverCallback:
+    """Register a global post_update observer."""
+    return observers(action=POST_UPDATE)(func)
+
+
+def on_pre_bulk_update(func: ObserverCallback) -> ObserverCallback:
+    """Register a global pre_bulk_update observer."""
+    return observers(action=PRE_BULK_UPDATE)(func)
+
+
+def on_post_bulk_update(func: ObserverCallback) -> ObserverCallback:
+    """Register a global post_bulk_update observer."""
+    return observers(action=POST_BULK_UPDATE)(func)
+
+
+def on_pre_delete(func: ObserverCallback) -> ObserverCallback:
+    """Register a global pre_delete observer."""
+    return observers(action=PRE_DELETE)(func)
+
+
+def on_post_delete(func: ObserverCallback) -> ObserverCallback:
+    """Register a global post_delete observer."""
+    return observers(action=POST_DELETE)(func)
+
+
+def on_raw_sql(func: ObserverCallback) -> ObserverCallback:
+    """Register a global raw_sql observer."""
+    return observers(action=RAW_SQL)(func)
+
+
+def on_connection_open(func: ObserverCallback) -> ObserverCallback:
+    """Register a global connection_open observer."""
+    return observers(action=CONNECTION_OPEN)(func)
+
+
+def on_connection_close(func: ObserverCallback) -> ObserverCallback:
+    """Register a global connection_close observer."""
+    return observers(action=CONNECTION_CLOSE)(func)
+
+
+def on_cursor_open(func: ObserverCallback) -> ObserverCallback:
+    """Register a global cursor_open observer."""
+    return observers(action=CURSOR_OPEN)(func)
+
+
+def on_cursor_close(func: ObserverCallback) -> ObserverCallback:
+    """Register a global cursor_close observer."""
+    return observers(action=CURSOR_CLOSE)(func)
+
+
+def on_query_before_execute(func: ObserverCallback) -> ObserverCallback:
+    """Register a global query_before_execute observer."""
+    return observers(action=QUERY_BEFORE_EXECUTE)(func)
+
+
+def on_query_after_execute(func: ObserverCallback) -> ObserverCallback:
+    """Register a global query_after_execute observer."""
+    return observers(action=QUERY_AFTER_EXECUTE)(func)
+
+
+def on_transaction_begin(func: ObserverCallback) -> ObserverCallback:
+    """Register a global transaction_begin observer."""
+    return observers(action=TRANSACTION_BEGIN)(func)
+
+
+def on_transaction_commit(func: ObserverCallback) -> ObserverCallback:
+    """Register a global transaction_commit observer."""
+    return observers(action=TRANSACTION_COMMIT)(func)
+
+
+def on_transaction_rollback(func: ObserverCallback) -> ObserverCallback:
+    """Register a global transaction_rollback observer."""
+    return observers(action=TRANSACTION_ROLLBACK)(func)
 
 
 def notify(ctx: ObserverContext) -> None:

@@ -11,6 +11,7 @@ A lightweight PostgreSQL query builder and ORM for Python. This documentation co
 - **[Functions & Aggregates](functions.md)** — SQL functions (Concat, Upper, Now, etc.), aggregates (Min, Max, Count, Sum, Avg)
 - **[Subqueries](subqueries.md)** — Subquery, OuterRef, correlated subqueries, CTEs
 - **[API Reference](api-reference.md)** — Full reference for classes, functions, and methods
+ - **[Observers & hooks](observers.md)** — Registering callbacks around queries, connections, and transactions
 
 ## Quick Links
 

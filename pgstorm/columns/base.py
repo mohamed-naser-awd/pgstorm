@@ -195,7 +195,7 @@ class Column:
         self.index = index
         self.kwargs = kwargs
 
-    def with_name(self, name: str) -> Column:
+    def with_name(self, name: str) -> "Column":
         """Return a copy of this column with the given name (used when binding to model)."""
         c = copy.copy(self)
         c.name = name

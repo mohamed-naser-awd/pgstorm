@@ -14,6 +14,7 @@ A lightweight PostgreSQL query builder and mini-ORM for Python. Compose type-saf
 - **Writes included** — `create`, `bulk_create`, `update`, `delete` (sync or `await` with async engines)
 - **Engine abstraction** — Sync (psycopg2, psycopg3) and async (psycopg3_async, asyncpg) interfaces
 - **Transactions** — `with pgstorm.transaction():` or `async with pgstorm.transaction():`
+- **Observers & hooks** — Django-style `pre_*` / `post_*` and connection/transaction hooks via `pgstorm.observers`
 - **Schema support** — `using_schema()` and per-join `rhs_schema`
 
 ## Requirements
@@ -117,6 +118,49 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Observers & hooks
+
+pgstorm includes an observer system for registering callbacks around queries, connections, cursors, and transactions via `pgstorm.observers`. Observers can be global (for all tables) or table-specific, and can be sync or async (async callbacks are awaited automatically when you use an async engine).
+
+```python
+from pgstorm.observers import (
+    ObserverContext,
+    table_observers,
+    on_fetch,
+    on_query_before_execute,
+    on_query_after_execute,
+    POST_CREATE,
+)
+from example.model import User
+
+
+@on_fetch
+def log_fetch(ctx: ObserverContext) -> None:
+    # Called for any SELECT
+    print(f"[fetch] table={ctx.table}, model={ctx.model}")
+
+
+@table_observers(action=POST_CREATE, table=User)
+def user_created(ctx: ObserverContext) -> None:
+    # Called only for User inserts
+    instance = ctx.extra.get("instance")
+    print(f"[post_create] User created: {instance}")
+
+
+@on_query_before_execute
+def before_any_query(ctx: ObserverContext) -> None:
+    action = ctx.extra.get("query_action", "?")
+    print(f"[before] action={action}, table={ctx.table}")
+
+
+@on_query_after_execute
+def after_any_query(ctx: ObserverContext) -> None:
+    rows = ctx.result if isinstance(ctx.result, list) else []
+    print(f"[after] rows={len(rows)}")
+```
+
+See `example/observers_example.py` and the **Observers & hooks** section in the docs for a fuller walkthrough and list of supported actions.
 
 ## Models
 
@@ -321,6 +365,7 @@ See the [docs/](docs/) folder for detailed documentation:
 - [Engine & Execution](docs/engine.md)
 - [Functions & Aggregates](docs/functions.md)
 - [Subqueries](docs/subqueries.md)
+- [Observers & hooks](docs/observers.md)
 - [API Reference](docs/api-reference.md)
 
 ## License

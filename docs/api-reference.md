@@ -526,7 +526,6 @@ Func_("function_name", arg1, arg2, ...)
 ```
 
 Use for any PostgreSQL function not listed above.
-
 ---
 
 ## CompiledQuery
@@ -537,3 +536,90 @@ Returned by `QuerySet.compiled()`. Not part of the public API but useful for deb
 |-----------|------|-------------|
 | `sql` | `psycopg.sql.Composable` | SQL composable (use `.as_string(None)` for string) |
 | `params` | `list` | Ordered parameter values |
+
+---
+
+## Observers (`pgstorm.observers`)
+
+Observer hooks let you register callbacks around database operations. Callbacks receive an `ObserverContext` instance and can be global (all tables) or table-specific.
+
+### `ObserverContext`
+
+```python
+from pgstorm.observers import ObserverContext
+
+class ObserverContext:
+    action: str                  # e.g. "fetch", "pre_create", "post_update"
+    model: type[Any] | None      # Model class, if applicable
+    table: str | None            # Table name, if applicable
+    compiled: Any                # CompiledQuery or None
+    params: list[Any]            # Ordered parameters
+    result: Any                  # Query result (set for "query_after_execute")
+    extra: dict[str, Any]        # Extra metadata (e.g. "query_action", "instance")
+```
+
+### Decorators
+
+- `observers(action)` — Register a **global** observer for a specific action.
+- `table_observers(action, table)` — Register a **table-specific** observer. If `action` is `None`, the observer is registered for all actions for that table.
+
+Convenience helpers for common global observers (all return the wrapped function):
+
+- `on_fetch(func)`
+- `on_pre_save(func)`, `on_post_save(func)`
+- `on_pre_create(func)`, `on_post_create(func)`
+- `on_pre_bulk_create(func)`, `on_post_bulk_create(func)`
+- `on_pre_update(func)`, `on_post_update(func)`
+- `on_pre_bulk_update(func)`, `on_post_bulk_update(func)`
+- `on_pre_delete(func)`, `on_post_delete(func)`
+- `on_raw_sql(func)`
+- `on_connection_open(func)`, `on_connection_close(func)`
+- `on_cursor_open(func)`, `on_cursor_close(func)`
+- `on_query_before_execute(func)`, `on_query_after_execute(func)`
+- `on_transaction_begin(func)`, `on_transaction_commit(func)`, `on_transaction_rollback(func)`
+
+### Common actions
+
+Actions are strings; the most commonly used ones are:
+
+- Query lifecycle: `"fetch"`, `"pre_create"`, `"post_create"`, `"pre_update"`, `"post_update"`, `"pre_delete"`, `"post_delete"`
+- Bulk writes: `"pre_bulk_create"`, `"post_bulk_create"`, `"pre_bulk_update"`, `"post_bulk_update"`
+- Connections and cursors: `"connection_open"`, `"connection_close"`, `"cursor_open"`, `"cursor_close"`
+- Execution and transactions: `"query_before_execute"`, `"query_after_execute"`, `"transaction_begin"`, `"transaction_commit"`, `"transaction_rollback"`
+
+### Example
+
+```python
+from pgstorm.observers import (
+    ObserverContext,
+    table_observers,
+    on_fetch,
+    on_query_before_execute,
+    on_query_after_execute,
+    POST_CREATE,
+)
+from example.model import User
+
+
+@on_fetch
+def log_fetch(ctx: ObserverContext) -> None:
+    print(f"[fetch] table={ctx.table}, model={ctx.model}")
+
+
+@table_observers(action=POST_CREATE, table=User)
+def user_created(ctx: ObserverContext) -> None:
+    instance = ctx.extra.get("instance")
+    print(f"[post_create] User created: {instance}")
+
+
+@on_query_before_execute
+def before_any_query(ctx: ObserverContext) -> None:
+    action = ctx.extra.get("query_action", "?")
+    print(f"[before] action={action}, table={ctx.table}")
+
+
+@on_query_after_execute
+def after_any_query(ctx: ObserverContext) -> None:
+    rows = ctx.result if isinstance(ctx.result, list) else []
+    print(f"[after] rows={len(rows)}")
+```

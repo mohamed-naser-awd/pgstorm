@@ -5,75 +5,73 @@ Run with: python -m example.observers_example
 (Requires database connection)
 """
 
-from pgstorm import ObserverContext, observers, table_observers
 from pgstorm.observers import (
-    FETCH,
+    ObserverContext,
+    table_observers,
+    on_fetch,
+    on_query_before_execute,
+    on_query_after_execute,
+    on_connection_open,
+    on_cursor_open,
+    on_cursor_close,
+    on_transaction_begin,
+    on_transaction_commit,
     POST_CREATE,
-    POST_SAVE,
-    RAW_SQL,
-    CONNECTION_OPEN,
-    CURSOR_OPEN,
-    CURSOR_CLOSE,
-    QUERY_BEFORE_EXECUTE,
-    QUERY_AFTER_EXECUTE,
-    TRANSACTION_BEGIN,
-    TRANSACTION_COMMIT,
-    TRANSACTION_ROLLBACK,
 )
 from example.model import User
 
 
 # Global observer - called for any fetch
-@observers(action=FETCH)
-def on_any_fetch(ctx: ObserverContext) -> None:
+@on_fetch
+def fetch_observer(ctx: ObserverContext) -> None:
     print(f"[fetch] table={ctx.table}, model={ctx.model}")
 
 
 # Table-specific observer - only for User creates (no model check needed)
 @table_observers(action=POST_CREATE, table=User)
-def on_user_create(ctx: ObserverContext) -> None:
+def user_create_observer(ctx: ObserverContext) -> None:
     instance = ctx.extra.get("instance")
     print(f"[post_create] User: {instance}")
 
 
 # Global observer for all queries (before execution)
-@observers(action=QUERY_BEFORE_EXECUTE)
-def before_query(ctx: ObserverContext) -> None:
+@on_query_before_execute
+def query_before_execute_observer(ctx: ObserverContext) -> None:
     action = ctx.extra.get("query_action", "?")
     print(f"[before] action={action}, table={ctx.table}")
 
 
 # Global observer for all queries (after execution)
-@observers(action=QUERY_AFTER_EXECUTE)
-def after_query(ctx: ObserverContext) -> None:
+@on_query_after_execute
+def query_after_execute_observer(ctx: ObserverContext) -> None:
     rows = ctx.result if isinstance(ctx.result, list) else []
     print(f"[after] rows={len(rows)}")
 
 
 # Connection/cursor hooks
-@observers(action=CONNECTION_OPEN)
-def on_connection_open(ctx: ObserverContext) -> None:
+@on_connection_open
+def connection_open_observer(ctx: ObserverContext) -> None:
     print("[connection_open]")
 
 
-@observers(action=CURSOR_OPEN)
-def on_cursor_open(ctx: ObserverContext) -> None:
+@on_cursor_open
+def cursor_open_observer(ctx: ObserverContext) -> None:
     print("[cursor_open]")
 
 
-@observers(action=CURSOR_CLOSE)
-def on_cursor_close(ctx: ObserverContext) -> None:
+@on_cursor_close
+def cursor_close_observer(ctx: ObserverContext) -> None:
     print("[cursor_close]")
 
 
 # Transaction hooks
-@observers(action=TRANSACTION_BEGIN)
-def on_transaction_begin(ctx: ObserverContext) -> None:
+@on_transaction_begin
+def transaction_begin_observer(ctx: ObserverContext) -> None:
     print("[transaction_begin]")
 
 
-@observers(action=TRANSACTION_COMMIT)
-def on_transaction_commit(ctx: ObserverContext) -> None:
+@on_transaction_commit
+def transaction_commit_observer(ctx: ObserverContext) -> None:
     print("[transaction_commit]")
 
 
