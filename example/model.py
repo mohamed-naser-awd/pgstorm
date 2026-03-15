@@ -22,6 +22,13 @@ class Order(BaseModel):
     user: types.ForeignKey[User]
 
 
+class Comment(BaseModel):
+    __table__ = "comment"
+
+    id: types.BigSerial[types.IS_PRIMARY_KEY_FIELD]
+    reply_to: types.ForeignKey[types.Self]
+
+
 # Pre-defined queryset: inherits from User for columns, defines data via __queryset__
 class ActiveUsers(BaseView, User):
     __table__ = "active_users"

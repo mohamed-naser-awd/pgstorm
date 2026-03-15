@@ -376,14 +376,7 @@ Use `types.Integer[types.IS_PRIMARY_KEY_FIELD]` or `types.BigSerial[types.IS_PRI
 | `types.FK_COLUMN("user_email")` | Use `user_email` as DB column name (default: `{attr}_id`) |
 | `types.ReverseName("profiles")` | Reverse relation name on target model |
 
-### Type checker support
-
-For editor/type checker support on instance access (`profile.user` → `User`), use `Annotated`:
-
-```python
-from typing import Annotated
-user: Annotated[User, types.ForeignKey[User, types.ON_DELETE_CASCADE]]
-```
+| `types.Self` | Self-referential relation: `reply_to: types.ForeignKey[types.Self]` |
 
 ---
 

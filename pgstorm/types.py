@@ -2,15 +2,13 @@
 Public type API for pgstorm models.
 - Scalars: age: types.Integer, email: types.String.
 - Relations: user: types.ForeignKey[User], or with metadata: types.ForeignKey[User, types.ON_DELETE_CASCADE, types.FK_FIELD("email")].
-  Same pattern for OneToOne and ManyToMany.
-- For editor/type checker support on instance access (profile.user), use Annotated:
-  user: Annotated[User, types.ForeignKey[User, types.ON_DELETE_CASCADE, types.FK_FIELD("email")]]
+  Self-referential: reply_to: types.ForeignKey[types.Self]. Same pattern for OneToOne and ManyToMany.
 """
 from __future__ import annotations
 
 from typing import Annotated
 
-from pgstorm.columns.base import FKColumnRef, FKFieldRef, Field, ForeignKey, IS_PRIMARY_KEY_FIELD, ManyToMany, OneToOne, ReverseNameRef
+from pgstorm.columns.base import FKColumnRef, FKFieldRef, Field, ForeignKey, IS_PRIMARY_KEY_FIELD, ManyToMany, OneToOne, ReverseNameRef, Self
 from pgstorm.columns.character import TextDescriptor, VarcharDescriptor
 from pgstorm.columns.datetime import TimestampTZDescriptor
 from pgstorm.columns.json_types import JsonbDescriptor
@@ -85,6 +83,7 @@ __all__ = [
     "ON_DELETE_NO_ACTION",
     "ReverseName",
     "ReverseNameRef",
+    "Self",
     "String",
     "TimestampTZ",
     "Varchar",

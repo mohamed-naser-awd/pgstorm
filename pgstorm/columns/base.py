@@ -78,6 +78,15 @@ class _PrimaryKeyFieldRef:
 IS_PRIMARY_KEY_FIELD = _PrimaryKeyFieldRef()
 
 
+class Self:
+    """
+    Sentinel for self-referential relations.
+    Use: reply_to: types.ForeignKey[types.Self] or types.OneToOne[types.Self]
+    """
+
+    __slots__ = ()
+
+
 class ReverseRelationDescriptor:
     """
     Descriptor added to the target model for reverse relations.
@@ -600,6 +609,8 @@ class RelationField(Field[Any, Type[M]], Generic[M]):
 
     def __set_name__(self, owner: type, name: str) -> None:
         self._name = name
+        if self._target_model is Self:
+            self._target_model = owner
         self._apply_metadata()
         # Use {attr}_id as DB column by default (e.g. user -> user_id), or FK_COLUMN override
         db_column = self._fk_column if self._fk_column is not None else f"{name}_id"

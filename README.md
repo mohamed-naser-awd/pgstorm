@@ -188,13 +188,7 @@ Use `__table__` or `__tablename__` to set the table name; otherwise the class na
 user: types.ForeignKey[User, types.ON_DELETE_CASCADE, types.FK_FIELD("email")]
 ```
 
-If you want your editor/type checker to understand that `profile.user` is a `User`, use `Annotated`:
-
-```python
-from pgstorm.types import Annotated
-
-user: Annotated[User, types.ForeignKey[User, types.ON_DELETE_CASCADE]]
-```
+Self-referential relations: `reply_to: types.ForeignKey[types.Self]`.
 
 ## Engine & Execution
 
