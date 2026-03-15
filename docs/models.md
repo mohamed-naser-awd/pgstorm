@@ -66,11 +66,21 @@ reply_to: types.ForeignKey[types.Self]
 
 You can define custom column types by subclassing `Field` and (optionally) `Column`. Use a custom `Column` when you need a specific PostgreSQL type or custom lookups; otherwise reuse an existing column class.
 
-**Example: `ImageField`** — store an image path/URL in a `VARCHAR(500)` column:
+**Resolving DB values to Python types:** override `to_python(value)` to convert the raw DB value when the attribute is read, and `to_db(value)` to convert when the attribute is set or persisted. The descriptor stores the DB form internally; `to_python` / `to_db` give you a Pythonic type (e.g. `S3Media`) while the column stays a simple type (e.g. `VARCHAR`).
+
+**Example: `ImageField`** — store an image URL in `VARCHAR(500)` and expose it as an `S3Media` instance:
 
 ```python
 from pgstorm import BaseModel, types
 from pgstorm.columns.base import Column, Field
+
+
+class S3Media:
+    """Pythonic wrapper for an S3 path/URL stored as string in the DB."""
+    def __init__(self, url: str):
+        self.url = url
+    def __str__(self) -> str:
+        return self.url
 
 
 class ImageColumn(Column):
@@ -91,6 +101,18 @@ class ImageField(Field):
             **self._kwargs,
         )
 
+    def to_python(self, value):
+        """DB string -> S3Media when reading the attribute."""
+        if value is None:
+            return None
+        return S3Media(value) if isinstance(value, str) else value
+
+    def to_db(self, value):
+        """S3Media or str -> string for storage and INSERT/UPDATE."""
+        if value is None:
+            return None
+        return getattr(value, "url", value) if not isinstance(value, str) else value
+
 
 class Product(BaseModel):
     __table__ = "products"
@@ -98,9 +120,22 @@ class Product(BaseModel):
     image_url: ImageField
 ```
 
+Usage: the DB column is a string; on the instance you get and set a rich type:
+
+```python
+product = Product.objects.filter(Product.id == 1)[0]
+media = product.image_url   # S3Media instance
+print(media.url)            # "s3://bucket/key.png"
+
+product.image_url = S3Media("s3://bucket/new.png")
+await product.update()      # persists the URL string
+```
+
 - **`column_class`** — the `Column` subclass used for DDL and query expressions.
 - **`_make_column()`** — builds the column instance; override to pass custom args (e.g. length) from the descriptor to the column.
-- Use as **type** (`image_url: ImageField`) or as **instance** if your field takes options (`image_url: ImageField(max_length=1000)` — then your descriptor’s `__init__` would accept `max_length` and pass it in `_make_column()`).
+- **`to_python(value)`** — raw value from DB → Python type when the attribute is read.
+- **`to_db(value)`** — Python value → raw form when the attribute is set or when building row data for INSERT/UPDATE.
+- Use as **type** (`image_url: ImageField`) or as **instance** if your field takes options (`image_url: ImageField(max_length=1000)`).
 
 ## Accessing Columns
 

@@ -468,6 +468,22 @@ class Field(Generic[V, C, *ScalarMeta]):
         """Return the actual Column instance (after descriptor is bound to a class)."""
         return self._column
 
+    def to_python(self, value: Any) -> Any:
+        """
+        Convert the raw DB value to the Python type when the attribute is read.
+        Override in subclasses (e.g. ImageField) to return a rich type like S3Media.
+        Default: identity.
+        """
+        return value
+
+    def to_db(self, value: Any) -> Any:
+        """
+        Convert the Python value to the DB form when the attribute is set or persisted.
+        Override in subclasses so that instance.attr = s3_media stores the serialized value.
+        Default: identity.
+        """
+        return value
+
     @overload
     def __get__(self, obj: None, objtype: Optional[type] = None) -> C: ...
     @overload
@@ -483,7 +499,8 @@ class Field(Generic[V, C, *ScalarMeta]):
                         attr_name = name
                         break
             return self._bound_column_ref(objtype, attr_name or "", column)  # type: ignore[return-value]
-        return getattr(obj, f"_pgstorm_value_{self._name}", self._default)  # type: ignore[return-value]
+        raw = getattr(obj, f"_pgstorm_value_{self._name}", self._default)
+        return self.to_python(raw)  # type: ignore[return-value]
 
     def _bound_column_ref(self, objtype: type[Any], attr_name: str, column: Column) -> Any:
         """Build the BoundColumnRef for class-level access. Override in RelationField to pass target_model."""
@@ -491,7 +508,7 @@ class Field(Generic[V, C, *ScalarMeta]):
         return BoundColumnRef(objtype, attr_name, column)
 
     def __set__(self, obj: Any, value: Any) -> None:
-        setattr(obj, f"_pgstorm_value_{self._name}", value)
+        setattr(obj, f"_pgstorm_value_{self._name}", self.to_db(value))
 
     def __delete__(self, obj: Any) -> None:
         if hasattr(obj, f"_pgstorm_value_{self._name}"):
