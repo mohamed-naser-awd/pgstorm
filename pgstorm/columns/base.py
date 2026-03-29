@@ -1,7 +1,8 @@
 """
 Base Column and Field for pgstorm.
-Each type has a Column (holds DDL/type info) and a Field subclass (descriptor for model attributes).
-Field.generate_descriptor(annotation) turns an annotation into a descriptor instance.
+Scalar columns use ScalarField: one class is both the PostgreSQL column (DDL, expressions) and the
+model attribute descriptor. Relation fields (ForeignKey, etc.) subclass Field without inheriting Column.
+Field.generate_descriptor(annotation) turns an annotation into a field instance.
 """
 from __future__ import annotations
 
@@ -330,9 +331,9 @@ ScalarMeta = TypeVarTuple("ScalarMeta")  # Optional: IS_PRIMARY_KEY_FIELD for sc
 
 class Field(Generic[V, C, *ScalarMeta]):
     """
-    Base descriptor for model attributes. All type classes (Integer, String, etc.) inherit from Field.
+    Base descriptor for model attributes. Scalar types subclass ScalarField (Field + Column).
     - V: value type when accessed on an instance (e.g. str, int).
-    - C: column type when accessed on the class (e.g. TextColumn, IntegerColumn).
+    - C: column type when accessed on the class (same as the field class for ScalarField).
     - get_pg_type(): returns the PostgreSQL type string for migrations/DDL.
     - get_column(): returns the actual Column instance for this attribute.
     """
@@ -513,6 +514,62 @@ class Field(Generic[V, C, *ScalarMeta]):
     def __delete__(self, obj: Any) -> None:
         if hasattr(obj, f"_pgstorm_value_{self._name}"):
             delattr(obj, f"_pgstorm_value_{self._name}")
+
+
+class ScalarField(Field, Column):
+    """
+    Scalar model field: one class is both the Column (DDL, comparisons, expressions) and the
+    descriptor for instance attributes. Subclass this for each PostgreSQL scalar type.
+    """
+
+    def __init__(
+        self,
+        name: str = "",
+        pg_type: str = "",
+        python_type: Type[Any] = object,
+        *,
+        default: Any = None,
+        nullable: bool = True,
+        primary_key: bool = False,
+        unique: bool = False,
+        index: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        Field.__init__(
+            self,
+            default=default,
+            nullable=nullable,
+            primary_key=primary_key,
+            unique=unique,
+            index=index,
+            **kwargs,
+        )
+        Column.__init__(
+            self,
+            name=name,
+            pg_type=pg_type,
+            python_type=python_type,
+            default=self._default,
+            nullable=self._nullable,
+            primary_key=self._primary_key,
+            unique=self._unique,
+            index=self._index,
+            **self._kwargs,
+        )
+
+    def _make_column(self) -> Column:
+        return self
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+        self.name = name
+        self._column = self
+
+    def get_column(self) -> Optional[Column]:
+        return self
+
+    def get_pg_type(self) -> str:
+        return self.ddl_type()
 
 
 class RelationField(Field[Any, Type[M]], Generic[M]):

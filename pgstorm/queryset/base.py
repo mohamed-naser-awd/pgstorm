@@ -864,7 +864,7 @@ class QuerySet(Generic[T]):
         join_type: Literal["LEFT", "RIGHT", "INNER", "FULL", "LATERAL"] = "LEFT",
         rhs_schema: str | None = None,
     ) -> Self:
-        from pgstorm.queryset.parser import _table_name
+        from pgstorm.queryset.parser import _is_temporary_model, _table_name
 
         qs = self.copy()
         lhs_table = _table_name(qs.model)
@@ -872,8 +872,13 @@ class QuerySet(Generic[T]):
             rhs_table = _table_name(join_with)
         else:
             raise TypeError("join_with must be a model class")
-        # If no explicit rhs_schema is provided, default to this queryset's schema.
-        effective_rhs_schema = rhs_schema if rhs_schema is not None else qs._schema
+        # Temporary tables must not be schema-qualified. Otherwise default join rhs to this schema.
+        if _is_temporary_model(join_with):
+            effective_rhs_schema = None
+        elif rhs_schema is not None:
+            effective_rhs_schema = rhs_schema
+        else:
+            effective_rhs_schema = qs._schema
         qs._joins.append(
             JoinExpression(
                 lhs_table,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, List, TYPE_CHECKING
+from typing import Any, Callable, Iterable, List, Literal, TYPE_CHECKING
 
 from psycopg import sql
 
@@ -74,6 +74,34 @@ def _table_name(model: type[Any]) -> str:
     if isinstance(explicit, str) and explicit:
         return explicit
     return model.__name__.lower()
+
+
+def _is_temporary_model(model: type[Any]) -> bool:
+    """True when the model maps to a PostgreSQL TEMPORARY table (session-scoped, not schema-qualified)."""
+    return bool(getattr(model, "__temporary__", False))
+
+
+def _sql_table_ref(model: type[Any], schema: str | None) -> sql.Composable:
+    """
+    SQL fragment for a table in FROM/UPDATE/INSERT/DELETE.
+    Temporary tables are never prefixed with search_path/schema (they live in pg_temp).
+    """
+    table = _table_name(model)
+    if _is_temporary_model(model):
+        return sql.Identifier(table)
+    if schema:
+        return sql.Identifier(schema, table)
+    return sql.Identifier(table)
+
+
+def _sql_join_rhs(join: JoinExpression) -> sql.Composable:
+    """SQL fragment for the right-hand table in a JOIN (unqualified for temporary models)."""
+    rm = join.rhs_model
+    if rm is not None and _is_temporary_model(rm):
+        return sql.Identifier(join.rhs)
+    if join.rhs_schema:
+        return sql.Identifier(join.rhs_schema, join.rhs)
+    return sql.Identifier(join.rhs)
 
 
 def _iter_model_columns(model: type[Any]) -> Iterable[tuple[str, Column]]:
@@ -322,7 +350,7 @@ def _select_list_for_queryset(qs: "QuerySet[Any]", params: List[Any] | None = No
             alias = f"{rhs_table}__{attr_name}"
             if columns_set is not None and alias not in columns_set:
                 continue
-            if rhs_schema:
+            if rhs_schema and not _is_temporary_model(rhs_model):
                 parts.append(
                     sql.Identifier(rhs_schema, rhs_table, attr_name)
                     + sql.SQL(" AS ")
@@ -715,8 +743,6 @@ def _compile_subquery_sql(
     Compile a queryset as a subquery (SELECT ... FROM ... WHERE ...).
     Pass outer_table/outer_model so OuterRef in the subquery's filters resolves correctly.
     """
-    from pgstorm.queryset.base import QuerySet
-
     model = qs.model
     table = _table_name(model)
     schema = getattr(qs, "_schema", None)
@@ -742,17 +768,11 @@ def _compile_subquery_sql(
         parts.append(sql.SQL("DISTINCT "))
     parts.append(select_list)
     parts.append(sql.SQL(" FROM "))
-    if schema:
-        parts.append(sql.Identifier(schema, table))
-    else:
-        parts.append(sql.Identifier(table))
+    parts.append(_sql_table_ref(model, schema))
 
     for join in joins_to_use:
         parts.append(sql.SQL(f" {join.join_type} JOIN "))
-        if getattr(join, "rhs_schema", None):
-            parts.append(sql.Identifier(join.rhs_schema, join.rhs))
-        else:
-            parts.append(sql.Identifier(join.rhs))
+        parts.append(_sql_join_rhs(join))
         parts.append(sql.SQL(" ON "))
         on_resolver = _build_table_for_column(model, table, join.rhs_model, join.rhs)
         parts.append(
@@ -933,129 +953,6 @@ def _joins_needed_for_filters(
     return result
 
 
-def _compile_subquery_sql(
-    qs: "QuerySet[Any]",
-    params: List[Any],
-    *,
-    outer_table: str,
-    outer_model: type[Any],
-) -> sql.Composable:
-    """
-    Compile a queryset as a subquery (SELECT ... FROM ... WHERE ...).
-    Appends params to the given list. Pass outer_table/outer_model so OuterRef
-    in the subquery's filters resolves to the parent query's columns.
-    """
-    model = qs.model
-    table = _table_name(model)
-    schema = getattr(qs, "_schema", None)
-
-    select_list = _select_list_for_queryset(qs, params)
-
-    existing_rhs = {j.rhs_model for j in qs._joins if getattr(j, "rhs_model", None) is not None}
-    agg_refs: list[BoundColumnRef] = []
-    for agg, _ in getattr(qs, "_aggregates", []) or []:
-        if agg.column is not None:
-            agg_refs.extend(_collect_bound_column_refs(agg.column))
-    auto_joins = _joins_needed_for_filters(model, table, qs._filters, extra_refs=agg_refs)
-    joins_to_use = list(qs._joins)
-    for j in auto_joins:
-        if j.rhs_model is not None and j.rhs_model not in existing_rhs:
-            joins_to_use.append(j)
-            existing_rhs.add(j.rhs_model)
-
-    parts: list[sql.Composable] = []
-    parts.append(sql.SQL("SELECT "))
-    if qs._distinct:
-        parts.append(sql.SQL("DISTINCT "))
-    parts.append(select_list)
-    parts.append(sql.SQL(" FROM "))
-    if schema:
-        parts.append(sql.Identifier(schema, table))
-    else:
-        parts.append(sql.Identifier(table))
-
-    for join in joins_to_use:
-        parts.append(sql.SQL(f" {join.join_type} JOIN "))
-        if getattr(join, "rhs_schema", None):
-            parts.append(sql.Identifier(join.rhs_schema, join.rhs))
-        else:
-            parts.append(sql.Identifier(join.rhs))
-        parts.append(sql.SQL(" ON "))
-        on_resolver = _build_table_for_column(model, table, join.rhs_model, join.rhs)
-        parts.append(
-            _compile_expression(
-                join.on,
-                table,
-                params,
-                table_for_column=on_resolver,
-                model=model,
-                rhs_model=join.rhs_model,
-            )
-        )
-
-    if qs._filters:
-        where_fragments = []
-        for f in qs._filters:
-            frag = _compile_expression(
-                f, table, params, model=model,
-                outer_table=outer_table, outer_model=outer_model,
-            )
-            if isinstance(f, OrExpression):
-                frag = sql.SQL("(") + frag + sql.SQL(")")
-            where_fragments.append(frag)
-        where_sql = sql.SQL(" AND ").join(where_fragments)
-        parts.append(sql.SQL(" WHERE ") + where_sql)
-
-    group_by_sql = _compile_group_by_clause(qs, table, model)
-    if group_by_sql is not None:
-        parts.append(group_by_sql)
-
-    having_filters = getattr(qs, "_having", None)
-    if having_filters:
-        having_fragments: list[sql.Composable] = []
-        for h in having_filters:
-            frag = _compile_expression(h, table, params, model=model)
-            if isinstance(h, OrExpression):
-                frag = sql.SQL("(") + frag + sql.SQL(")")
-            having_fragments.append(frag)
-        parts.append(sql.SQL(" HAVING ") + sql.SQL(" AND ").join(having_fragments))
-
-    if qs._order_by:
-        order_parts = []
-        for ob in qs._order_by:
-            if isinstance(ob, Expression):
-                lhs = ob.lhs
-                direction = ob.operator.upper() if ob.operator else ""
-            else:
-                lhs = ob
-                direction = ""
-            if isinstance(lhs, BoundColumnRef):
-                order_table = _table_name(lhs.model)
-                col_name = _db_column_name(lhs, lhs.model)
-            elif isinstance(lhs, Column):
-                col_name = _db_column_name(lhs, model, None)
-                order_table = table
-            else:
-                col_name = _db_column_name(lhs, model, None) or getattr(lhs, "name", str(lhs))
-                order_table = table
-            col_ident = sql.Identifier(order_table, col_name)
-            if direction in ("ASC", "DESC"):
-                order_parts.append(col_ident + sql.SQL(f" {direction}"))
-            else:
-                order_parts.append(col_ident)
-        if order_parts:
-            parts.append(sql.SQL(" ORDER BY ") + sql.SQL(", ").join(order_parts))
-
-    if qs._limit:
-        parts.append(sql.SQL(" LIMIT ") + sql.Placeholder())
-        params.append(int(qs._limit))
-    if qs._offset:
-        parts.append(sql.SQL(" OFFSET ") + sql.Placeholder())
-        params.append(int(qs._offset))
-
-    return sql.Composed(parts)
-
-
 def _build_table_for_column(
     main_model: type[Any], main_table: str, rhs_model: type[Any] | None, rhs_table: str
 ) -> Callable[[Any], str]:
@@ -1078,128 +975,6 @@ def _build_table_for_column(
         return main_table
 
     return table_for_column
-
-
-def _compile_subquery_sql(
-    qs: "QuerySet[Any]",
-    params: List[Any],
-    *,
-    outer_table: str,
-    outer_model: type[Any],
-) -> sql.Composable:
-    """
-    Compile a queryset as a subquery (SELECT ... FROM ... WHERE ...).
-    Used when Subquery is RHS in an expression. Pass outer_table/outer_model
-    so OuterRef in the subquery's filters resolves to the parent's table.
-    """
-    model = qs.model
-    table = _table_name(model)
-    schema = getattr(qs, "_schema", None)
-
-    select_list = _select_list_for_queryset(qs, params)
-
-    existing_rhs = {j.rhs_model for j in qs._joins if getattr(j, "rhs_model", None) is not None}
-    agg_refs: list[BoundColumnRef] = []
-    for agg, _ in getattr(qs, "_aggregates", []) or []:
-        if agg.column is not None:
-            agg_refs.extend(_collect_bound_column_refs(agg.column))
-    auto_joins = _joins_needed_for_filters(model, table, qs._filters, extra_refs=agg_refs)
-    joins_to_use = list(qs._joins)
-    for j in auto_joins:
-        if j.rhs_model is not None and j.rhs_model not in existing_rhs:
-            joins_to_use.append(j)
-            existing_rhs.add(j.rhs_model)
-
-    parts: list[sql.Composable] = []
-    parts.append(sql.SQL("SELECT "))
-    if qs._distinct:
-        parts.append(sql.SQL("DISTINCT "))
-    parts.append(select_list)
-    parts.append(sql.SQL(" FROM "))
-    if schema:
-        parts.append(sql.Identifier(schema, table))
-    else:
-        parts.append(sql.Identifier(table))
-
-    for join in joins_to_use:
-        parts.append(sql.SQL(f" {join.join_type} JOIN "))
-        if getattr(join, "rhs_schema", None):
-            parts.append(sql.Identifier(join.rhs_schema, join.rhs))
-        else:
-            parts.append(sql.Identifier(join.rhs))
-        parts.append(sql.SQL(" ON "))
-        on_resolver = _build_table_for_column(model, table, join.rhs_model, join.rhs)
-        parts.append(
-            _compile_expression(
-                join.on,
-                table,
-                params,
-                table_for_column=on_resolver,
-                model=model,
-                rhs_model=join.rhs_model,
-            )
-        )
-
-    if qs._filters:
-        where_fragments = []
-        for f in qs._filters:
-            frag = _compile_expression(
-                f, table, params, model=model,
-                outer_table=outer_table, outer_model=outer_model,
-            )
-            if isinstance(f, OrExpression):
-                frag = sql.SQL("(") + frag + sql.SQL(")")
-            where_fragments.append(frag)
-        parts.append(sql.SQL(" WHERE ") + sql.SQL(" AND ").join(where_fragments))
-
-    group_by_sql = _compile_group_by_clause(qs, table, model)
-    if group_by_sql is not None:
-        parts.append(group_by_sql)
-
-    having_filters = getattr(qs, "_having", None)
-    if having_filters:
-        having_fragments: list[sql.Composable] = []
-        for h in having_filters:
-            frag = _compile_expression(h, table, params, model=model)
-            if isinstance(h, OrExpression):
-                frag = sql.SQL("(") + frag + sql.SQL(")")
-            having_fragments.append(frag)
-        parts.append(sql.SQL(" HAVING ") + sql.SQL(" AND ").join(having_fragments))
-
-    if qs._order_by:
-        order_parts = []
-        for ob in qs._order_by:
-            if isinstance(ob, Expression):
-                lhs = ob.lhs
-                direction = ob.operator.upper() if ob.operator else ""
-            else:
-                lhs = ob
-                direction = ""
-            if isinstance(lhs, BoundColumnRef):
-                order_table = _table_name(lhs.model)
-                col_name = _db_column_name(lhs, lhs.model)
-            elif isinstance(lhs, Column):
-                col_name = _db_column_name(lhs, model, None)
-                order_table = table
-            else:
-                col_name = _db_column_name(lhs, model, None) or getattr(lhs, "name", str(lhs))
-                order_table = table
-            col_ident = sql.Identifier(order_table, col_name)
-            if direction in ("ASC", "DESC"):
-                order_parts.append(col_ident + sql.SQL(f" {direction}"))
-            else:
-                order_parts.append(col_ident)
-        if order_parts:
-            parts.append(sql.SQL(" ORDER BY ") + sql.SQL(", ").join(order_parts))
-
-    if qs._limit:
-        parts.append(sql.SQL(" LIMIT ") + sql.Placeholder())
-        params.append(int(qs._limit))
-    if qs._offset:
-        parts.append(sql.SQL(" OFFSET ") + sql.Placeholder())
-        params.append(int(qs._offset))
-
-    return sql.Composed(parts)
 
 
 def _is_view_model(model: type[Any]) -> bool:
@@ -1266,6 +1041,7 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
       - defer()/explicit column selection when available on the model
       - joins (LEFT/RIGHT/INNER/FULL/LATERAL)
       - view models (BaseView with __queryset__ or __query__) as subquery/CTE
+      - models with __temporary__ (e.g. BaseTempModel): tables are never schema-qualified
     """
 
     model = qs.model
@@ -1301,7 +1077,7 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
             params.extend(sub_params)
             from_clause = sql.SQL("(") + sub_sql + sql.SQL(") AS ") + sql.Identifier(table)
     else:
-        from_clause = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+        from_clause = _sql_table_ref(model, schema)
 
     # SELECT [DISTINCT] <columns> FROM <table|subquery>
     if is_cte:
@@ -1317,10 +1093,7 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
     # JOINs
     for join in joins_to_use:
         query_parts.append(sql.SQL(f" {join.join_type} JOIN "))
-        if getattr(join, "rhs_schema", None):
-            query_parts.append(sql.Identifier(join.rhs_schema, join.rhs))
-        else:
-            query_parts.append(sql.Identifier(join.rhs))
+        query_parts.append(_sql_join_rhs(join))
         query_parts.append(sql.SQL(" ON "))
         on_resolver = _build_table_for_column(
             model, table, join.rhs_model, join.rhs
@@ -1429,6 +1202,53 @@ def compile_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
     )
 
 
+def compile_create_temp_table(
+    model: type[Any],
+    *,
+    if_not_exists: bool = False,
+    on_commit: Literal["PRESERVE ROWS", "DELETE ROWS", "DROP"] | None = None,
+) -> CompiledQuery:
+    """
+    Compile ``CREATE TEMPORARY TABLE`` from the model's column definitions.
+
+    The model should set ``__temporary__ = True`` (or subclass ``BaseTempModel``) so that
+    subsequent SELECT/INSERT/UPDATE/DELETE omit schema qualification. Run the returned
+    query on the same connection/session before using ``Model.objects``.
+    """
+    cols = list(_iter_model_columns(model))
+    if not cols:
+        raise ValueError(f"{model.__name__} has no columns for CREATE TEMPORARY TABLE")
+    table = _table_name(model)
+
+    col_frags: list[sql.Composable] = []
+    for attr_name, col in cols:
+        db_name = (col.name if getattr(col, "name", None) else None) or attr_name
+        frag = sql.Identifier(db_name) + sql.SQL(" ") + sql.SQL(col.ddl_type())
+        if getattr(col, "primary_key", False):
+            frag = frag + sql.SQL(" PRIMARY KEY")
+        elif not col.nullable:
+            frag = frag + sql.SQL(" NOT NULL")
+        col_frags.append(frag)
+
+    parts: list[sql.Composable] = [sql.SQL("CREATE TEMPORARY TABLE ")]
+    if if_not_exists:
+        parts.append(sql.SQL("IF NOT EXISTS "))
+    parts.append(sql.Identifier(table))
+    parts.append(sql.SQL(" ("))
+    parts.append(sql.SQL(", ").join(col_frags))
+    parts.append(sql.SQL(")"))
+    if on_commit is not None:
+        parts.append(sql.SQL(" ON COMMIT ") + sql.SQL(on_commit.replace("_", " ")))
+
+    return CompiledQuery(
+        sql=sql.Composed(parts),
+        params=[],
+        action="create_temp_table",
+        model=model,
+        table=table,
+    )
+
+
 # --- DML: INSERT, UPDATE, DELETE ---
 
 
@@ -1530,7 +1350,7 @@ def compile_insert(
                 value_parts.append(sql.Placeholder())
         value_rows.append(sql.SQL("(") + sql.SQL(", ").join(value_parts) + sql.SQL(")"))
 
-    target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+    target = _sql_table_ref(model, schema)
     query = (
         sql.SQL("INSERT INTO ")
         + target
@@ -1591,7 +1411,7 @@ def compile_update_one(
             params.append(val)
     params.append(pk_value)
 
-    target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+    target = _sql_table_ref(model, schema)
     query = (
         sql.SQL("UPDATE ")
         + target
@@ -1671,7 +1491,7 @@ def compile_bulk_update(
     for row in rows_data:
         params.append(row[db_pk])
 
-    target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+    target = _sql_table_ref(model, schema)
     query = (
         sql.SQL("UPDATE ")
         + target
@@ -1707,7 +1527,7 @@ def compile_delete_by_pk(model: type[Any], pk_value: Any, schema: str | None = N
         db_pk = "id"
 
     params: list[Any] = [pk_value]
-    target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+    target = _sql_table_ref(model, schema)
     query = (
         sql.SQL("DELETE FROM ")
         + target
@@ -1750,7 +1570,7 @@ def compile_delete_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
         sub_qs._columns = [pk_attr]
         sub_compiled = compile_queryset(sub_qs)
         # Build DELETE FROM t WHERE pk IN (subquery)
-        target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+        target = _sql_table_ref(model, schema)
         # The subquery returns rows with one column (pk). We need WHERE pk IN (SELECT ...)
         # compile_queryset produces SELECT table.pk FROM ... - the column might be aliased
         # Simpler: use the raw subquery sql and params
@@ -1770,7 +1590,7 @@ def compile_delete_queryset(qs: "QuerySet[Any]") -> CompiledQuery:
 
     # No joins: simple DELETE FROM t WHERE ...
     params: list[Any] = []
-    target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+    target = _sql_table_ref(model, schema)
     query_parts: list[sql.Composable] = [
         sql.SQL("DELETE FROM "),
         target,
@@ -1829,7 +1649,7 @@ def compile_queryset_update(qs: "QuerySet[Any]", updates: dict[str, Any]) -> Com
     if not set_parts:
         raise ValueError("No columns to update")
 
-    target = sql.Identifier(schema, table) if schema else sql.Identifier(table)
+    target = _sql_table_ref(model, schema)
     set_sql = sql.SQL(", ").join(set_parts)
 
     has_joins = bool(getattr(qs, "_joins", None))

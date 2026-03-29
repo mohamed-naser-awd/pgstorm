@@ -1,126 +1,153 @@
 """
-pgstorm columns: descriptors and column classes for all PostgreSQL types.
-Each type provides a Descriptor (for model attributes) and a Column (for DDL/ORM).
-Descriptor API: get_pg_type() for migrations, get_column() for the Column instance.
+pgstorm columns: scalar field types for PostgreSQL.
+Each scalar type is a single class (ScalarField): column definition, expressions, and model descriptor.
+Backward-compatible *Column / *Descriptor names are aliases for the same class.
 """
-from pgstorm.columns.base import Column, ColumnDescriptor
+from pgstorm.columns.base import Column, ColumnDescriptor, ScalarField
 from pgstorm.columns.numeric import (
+    BigInt,
     BigIntColumn,
     BigIntDescriptor,
+    BigSerial,
     BigSerialColumn,
     BigSerialDescriptor,
-    DecimalDescriptor,
     DecimalColumn,
+    DecimalDescriptor,
+    DoublePrecision,
     DoublePrecisionColumn,
     DoublePrecisionDescriptor,
+    Integer,
     IntegerColumn,
     IntegerDescriptor,
+    Numeric,
     NumericColumn,
     NumericDescriptor,
+    Real,
     RealColumn,
     RealDescriptor,
+    Serial,
     SerialColumn,
     SerialDescriptor,
+    SmallInt,
     SmallIntColumn,
     SmallIntDescriptor,
+    SmallSerial,
     SmallSerialColumn,
     SmallSerialDescriptor,
 )
 
 from pgstorm.columns.character import (
+    BPChar,
     BPCharColumn,
     BPCharDescriptor,
+    Char,
     CharColumn,
     CharDescriptor,
+    Text,
     TextColumn,
     TextDescriptor,
+    Varchar,
     VarcharColumn,
     VarcharDescriptor,
 )
 
-from pgstorm.columns.binary import ByteaColumn, ByteaDescriptor
-from pgstorm.columns.boolean import BooleanColumn, BooleanDescriptor
+from pgstorm.columns.binary import Bytea, ByteaColumn, ByteaDescriptor
+from pgstorm.columns.boolean import Boolean, BooleanColumn, BooleanDescriptor
 from pgstorm.columns.datetime import (
+    Date,
     DateColumn,
     DateDescriptor,
+    Interval,
     IntervalColumn,
     IntervalDescriptor,
+    Time,
     TimeColumn,
     TimeDescriptor,
+    TimeTZ,
     TimeTZColumn,
     TimeTZDescriptor,
+    Timestamp,
     TimestampColumn,
     TimestampDescriptor,
+    TimestampTZ,
     TimestampTZColumn,
     TimestampTZDescriptor,
 )
 
 from pgstorm.columns.network import (
+    Cidr,
     CidrColumn,
     CidrDescriptor,
+    Inet,
     InetColumn,
     InetDescriptor,
+    MacAddr,
     MacAddrColumn,
     MacAddrDescriptor,
+    MacAddr8,
     MacAddr8Column,
     MacAddr8Descriptor,
 )
 
-from pgstorm.columns.bit import (
-    BitColumn,
-    BitDescriptor,
-    VarBitColumn,
-    VarBitDescriptor,
-)
-
-from pgstorm.columns.money import MoneyColumn, MoneyDescriptor
-from pgstorm.columns.json_types import (
-    JsonColumn,
-    JsonDescriptor,
-    JsonbColumn,
-    JsonbDescriptor,
-)
-
-from pgstorm.columns.uuid_type import UUIDColumn, UUIDDescriptor
-from pgstorm.columns.xml_type import XmlColumn, XmlDescriptor
+from pgstorm.columns.bit import Bit, BitColumn, BitDescriptor, VarBit, VarBitColumn, VarBitDescriptor
+from pgstorm.columns.money import Money, MoneyColumn, MoneyDescriptor
+from pgstorm.columns.json_types import Json, JsonColumn, JsonDescriptor, Jsonb, JsonbColumn, JsonbDescriptor
+from pgstorm.columns.uuid_type import UUID, UUIDColumn, UUIDDescriptor
+from pgstorm.columns.xml_type import Xml, XmlColumn, XmlDescriptor
 from pgstorm.columns.geometric import (
+    Box,
     BoxColumn,
     BoxDescriptor,
+    Circle,
     CircleColumn,
     CircleDescriptor,
+    Line,
     LineColumn,
     LineDescriptor,
+    Lseg,
     LsegColumn,
     LsegDescriptor,
+    Path,
     PathColumn,
     PathDescriptor,
+    Point,
     PointColumn,
     PointDescriptor,
+    Polygon,
     PolygonColumn,
     PolygonDescriptor,
 )
 
 from pgstorm.columns.textsearch import (
+    TsQuery,
     TsQueryColumn,
     TsQueryDescriptor,
+    TsVector,
     TsVectorColumn,
     TsVectorDescriptor,
 )
 
 from pgstorm.columns.snapshot import (
+    PgLsn,
     PgLsnColumn,
     PgLsnDescriptor,
+    PgSnapshot,
     PgSnapshotColumn,
     PgSnapshotDescriptor,
+    TxidSnapshot,
     TxidSnapshotColumn,
     TxidSnapshotDescriptor,
 )
 
 from pgstorm.columns.vector import (
+    HalfVec,
     HalfVecColumn,
     HalfVecDescriptor,
+    SparseVec,
     SparseVecColumn,
     SparseVecDescriptor,
+    Vector,
+    VectorBit,
     VectorBitColumn,
     VectorBitDescriptor,
     VectorColumn,
@@ -128,120 +155,155 @@ from pgstorm.columns.vector import (
 )
 
 __all__ = [
-    # Base
     "Column",
     "ColumnDescriptor",
-    # Numeric
+    "ScalarField",
+    # Numeric (canonical + aliases)
+    "SmallInt",
     "SmallIntColumn",
     "SmallIntDescriptor",
+    "Integer",
     "IntegerColumn",
     "IntegerDescriptor",
+    "BigInt",
     "BigIntColumn",
     "BigIntDescriptor",
+    "SmallSerial",
     "SmallSerialColumn",
     "SmallSerialDescriptor",
+    "Serial",
     "SerialColumn",
     "SerialDescriptor",
+    "BigSerial",
     "BigSerialColumn",
     "BigSerialDescriptor",
+    "Real",
     "RealColumn",
     "RealDescriptor",
+    "DoublePrecision",
     "DoublePrecisionColumn",
     "DoublePrecisionDescriptor",
+    "Numeric",
     "NumericColumn",
     "NumericDescriptor",
     "DecimalColumn",
     "DecimalDescriptor",
     # Character
+    "Text",
     "TextColumn",
     "TextDescriptor",
+    "Char",
     "CharColumn",
     "CharDescriptor",
+    "Varchar",
     "VarcharColumn",
     "VarcharDescriptor",
+    "BPChar",
     "BPCharColumn",
     "BPCharDescriptor",
-    # Binary
+    "Bytea",
     "ByteaColumn",
     "ByteaDescriptor",
-    # Boolean
+    "Boolean",
     "BooleanColumn",
     "BooleanDescriptor",
-    # Date/Time
+    "Date",
     "DateColumn",
     "DateDescriptor",
+    "Time",
     "TimeColumn",
     "TimeDescriptor",
+    "TimeTZ",
     "TimeTZColumn",
     "TimeTZDescriptor",
+    "Timestamp",
     "TimestampColumn",
     "TimestampDescriptor",
+    "TimestampTZ",
     "TimestampTZColumn",
     "TimestampTZDescriptor",
+    "Interval",
     "IntervalColumn",
     "IntervalDescriptor",
-    # Network
+    "Inet",
     "InetColumn",
     "InetDescriptor",
+    "Cidr",
     "CidrColumn",
     "CidrDescriptor",
+    "MacAddr",
     "MacAddrColumn",
     "MacAddrDescriptor",
+    "MacAddr8",
     "MacAddr8Column",
     "MacAddr8Descriptor",
-    # Bit
+    "Bit",
     "BitColumn",
     "BitDescriptor",
+    "VarBit",
     "VarBitColumn",
     "VarBitDescriptor",
-    # Money
+    "Money",
     "MoneyColumn",
     "MoneyDescriptor",
-    # JSON
+    "Json",
     "JsonColumn",
     "JsonDescriptor",
+    "Jsonb",
     "JsonbColumn",
     "JsonbDescriptor",
-    # UUID
+    "UUID",
     "UUIDColumn",
     "UUIDDescriptor",
-    # XML
+    "Xml",
     "XmlColumn",
     "XmlDescriptor",
-    # Geometric
+    "Point",
     "PointColumn",
     "PointDescriptor",
+    "Line",
     "LineColumn",
     "LineDescriptor",
+    "Lseg",
     "LsegColumn",
     "LsegDescriptor",
+    "Box",
     "BoxColumn",
     "BoxDescriptor",
+    "Path",
     "PathColumn",
     "PathDescriptor",
+    "Polygon",
     "PolygonColumn",
     "PolygonDescriptor",
+    "Circle",
     "CircleColumn",
     "CircleDescriptor",
-    # Text search
+    "TsVector",
     "TsVectorColumn",
     "TsVectorDescriptor",
+    "TsQuery",
     "TsQueryColumn",
     "TsQueryDescriptor",
-    # Snapshot / LSN
+    "PgLsn",
     "PgLsnColumn",
     "PgLsnDescriptor",
+    "PgSnapshot",
     "PgSnapshotColumn",
     "PgSnapshotDescriptor",
+    "TxidSnapshot",
     "TxidSnapshotColumn",
     "TxidSnapshotDescriptor",
-    # pgvector
+    "Vector",
     "VectorColumn",
     "VectorDescriptor",
+    "HalfVec",
     "HalfVecColumn",
     "HalfVecDescriptor",
+    "SparseVec",
     "SparseVecColumn",
     "SparseVecDescriptor",
+    "VectorBit",
     "VectorBitColumn",
     "VectorBitDescriptor",
 ]

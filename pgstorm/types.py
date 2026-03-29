@@ -9,29 +9,18 @@ from __future__ import annotations
 from typing import Annotated
 
 from pgstorm.columns.base import FKColumnRef, FKFieldRef, Field, ForeignKey, IS_PRIMARY_KEY_FIELD, ManyToMany, OneToOne, ReverseNameRef, Self
-from pgstorm.columns.character import TextDescriptor, VarcharDescriptor
-from pgstorm.columns.datetime import TimestampTZDescriptor
-from pgstorm.columns.json_types import JsonbDescriptor
-from pgstorm.columns.network import InetDescriptor
-from pgstorm.columns.numeric import BigIntDescriptor, BigSerialDescriptor, IntegerDescriptor
+from pgstorm.columns.character import Text, Varchar as _Varchar
+from pgstorm.columns.datetime import TimestampTZ
+from pgstorm.columns.json_types import Jsonb
+from pgstorm.columns.network import Inet
+from pgstorm.columns.numeric import BigInt, BigSerial, Integer
 
-# Type classes (inherit from Field via *Descriptor -> ColumnDescriptor = Field)
-Integer = IntegerDescriptor
-String = TextDescriptor
-BigSerial = BigSerialDescriptor
-BigInt = BigIntDescriptor
-Jsonb = JsonbDescriptor
-Inet = InetDescriptor
+String = Text
 
 
 def Varchar(length: int | None = None):
     """VARCHAR with optional length. Use: action: types.Varchar(20)"""
-    return VarcharDescriptor(length=length)
-
-
-def TimestampTZ(default=None, precision: int | None = None):
-    """TIMESTAMP WITH TIME ZONE. Use: created_at: types.TimestampTZ(default=Now())"""
-    return TimestampTZDescriptor(default=default, precision=precision)
+    return _Varchar(length=length)
 
 # Relation types: metadata goes in the brackets, e.g. ForeignKey[User, ON_DELETE_CASCADE, FK_FIELD("email")]
 

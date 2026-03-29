@@ -1,4 +1,5 @@
-from pgstorm.models import BaseModel
+from pgstorm.models import BaseModel, BaseTempModel
+from pgstorm.queryset.parser import compile_create_temp_table
 from pgstorm.views import BaseView
 from pgstorm import types
 from pgstorm.prefetch import Prefetch
@@ -33,6 +34,8 @@ def query(model: type[BaseModel]):
 
 __all__ = [
     "BaseModel",
+    "BaseTempModel",
+    "compile_create_temp_table",
     "Prefetch",
     "query",
     "ObserverContext",

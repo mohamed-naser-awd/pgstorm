@@ -3,43 +3,23 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pgstorm.columns.base import Column, ColumnDescriptor
+from pgstorm.columns.base import ScalarField
 
 
-class BitColumn(Column):
+class Bit(ScalarField):
     def __init__(
         self,
         name: str = "",
         length: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
-        # bit without length = bit(1)
         n = length if length is not None else 1
         pg_type = f"BIT({n})"
         super().__init__(name=name, pg_type=pg_type, python_type=str, **kwargs)
         self.length = n
 
 
-class BitDescriptor(ColumnDescriptor):
-    column_class = BitColumn
-
-    def __init__(self, length: Optional[int] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._length = length
-
-    def _make_column(self) -> Column:
-        return BitColumn(
-            length=self._length,
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-class VarBitColumn(Column):
+class VarBit(ScalarField):
     def __init__(
         self,
         name: str = "",
@@ -51,20 +31,5 @@ class VarBitColumn(Column):
         self.length = length
 
 
-class VarBitDescriptor(ColumnDescriptor):
-    column_class = VarBitColumn
-
-    def __init__(self, length: Optional[int] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._length = length
-
-    def _make_column(self) -> Column:
-        return VarBitColumn(
-            length=self._length,
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
+BitColumn = BitDescriptor = Bit
+VarBitColumn = VarBitDescriptor = VarBit

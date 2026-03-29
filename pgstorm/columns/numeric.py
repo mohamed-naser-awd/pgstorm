@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Generic, Optional
 
-from pgstorm.columns.base import Column, ColumnDescriptor, ScalarMeta
+from pgstorm.columns.base import ScalarField, ScalarMeta
 
 
 class _ComparableLookupsMixin:
@@ -44,170 +44,51 @@ class _ComparableLookupsMixin:
         return self._expr(op.GTE, rhs)
 
 
-# --- SmallInt ---
-class SmallIntColumn(_ComparableLookupsMixin, Column):
+class SmallInt(_ComparableLookupsMixin, ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="SMALLINT", python_type=int, **kwargs)
 
 
-class SmallIntDescriptor(ColumnDescriptor[int, SmallIntColumn]):
-    column_class = SmallIntColumn
+class Integer(_ComparableLookupsMixin, ScalarField, Generic[*ScalarMeta]):
+    """Supports types.Integer[types.IS_PRIMARY_KEY_FIELD] for primary key fields."""
 
-    def _make_column(self) -> Column:
-        return SmallIntColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- Integer ---
-class IntegerColumn(_ComparableLookupsMixin, Column):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="INTEGER", python_type=int, **kwargs)
 
 
-class IntegerDescriptor(ColumnDescriptor[int, IntegerColumn], Generic[*ScalarMeta]):
-    """Supports types.Integer[types.IS_PRIMARY_KEY_FIELD] for primary key fields."""
-    column_class = IntegerColumn
-
-    def _make_column(self) -> Column:
-        return IntegerColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- BigInt ---
-class BigIntColumn(_ComparableLookupsMixin, Column):
+class BigInt(_ComparableLookupsMixin, ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="BIGINT", python_type=int, **kwargs)
 
 
-class BigIntDescriptor(ColumnDescriptor[int, BigIntColumn]):
-    column_class = BigIntColumn
-
-    def _make_column(self) -> Column:
-        return BigIntColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- SmallSerial ---
-class SmallSerialColumn(_ComparableLookupsMixin, Column):
+class SmallSerial(_ComparableLookupsMixin, ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="SMALLSERIAL", python_type=int, **kwargs)
 
 
-class SmallSerialDescriptor(ColumnDescriptor[int, SmallSerialColumn]):
-    column_class = SmallSerialColumn
-
-    def _make_column(self) -> Column:
-        return SmallSerialColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- Serial ---
-class SerialColumn(_ComparableLookupsMixin, Column):
+class Serial(_ComparableLookupsMixin, ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="SERIAL", python_type=int, **kwargs)
 
 
-class SerialDescriptor(ColumnDescriptor[int, SerialColumn]):
-    column_class = SerialColumn
+class BigSerial(_ComparableLookupsMixin, ScalarField, Generic[*ScalarMeta]):
+    """Supports types.BigSerial[types.IS_PRIMARY_KEY_FIELD] for primary key fields."""
 
-    def _make_column(self) -> Column:
-        return SerialColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- BigSerial ---
-class BigSerialColumn(_ComparableLookupsMixin, Column):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="BIGSERIAL", python_type=int, **kwargs)
 
 
-class BigSerialDescriptor(ColumnDescriptor[int, BigSerialColumn], Generic[*ScalarMeta]):
-    """Supports types.BigSerial[types.IS_PRIMARY_KEY_FIELD] for primary key fields."""
-    column_class = BigSerialColumn
-
-    def _make_column(self) -> Column:
-        return BigSerialColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- Real (float4) ---
-class RealColumn(_ComparableLookupsMixin, Column):
+class Real(_ComparableLookupsMixin, ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="REAL", python_type=float, **kwargs)
 
 
-class RealDescriptor(ColumnDescriptor[float, RealColumn]):
-    column_class = RealColumn
-
-    def _make_column(self) -> Column:
-        return RealColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- Double Precision (float8) ---
-class DoublePrecisionColumn(_ComparableLookupsMixin, Column):
+class DoublePrecision(_ComparableLookupsMixin, ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="DOUBLE PRECISION", python_type=float, **kwargs)
 
 
-class DoublePrecisionDescriptor(ColumnDescriptor[float, DoublePrecisionColumn]):
-    column_class = DoublePrecisionColumn
-
-    def _make_column(self) -> Column:
-        return DoublePrecisionColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# --- Numeric / Decimal ---
-class NumericColumn(_ComparableLookupsMixin, Column):
+class Numeric(_ComparableLookupsMixin, ScalarField):
     def __init__(
         self,
         name: str = "",
@@ -226,32 +107,13 @@ class NumericColumn(_ComparableLookupsMixin, Column):
         self.scale = scale
 
 
-class NumericDescriptor(ColumnDescriptor[Decimal, NumericColumn]):
-    column_class = NumericColumn
-
-    def __init__(
-        self,
-        precision: Optional[int] = None,
-        scale: Optional[int] = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(**kwargs)
-        self._precision = precision
-        self._scale = scale
-
-    def _make_column(self) -> Column:
-        return NumericColumn(
-            precision=self._precision,
-            scale=self._scale,
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-# Convenience aliases
-DecimalColumn = NumericColumn
-DecimalDescriptor = NumericDescriptor
+SmallIntColumn = SmallIntDescriptor = SmallInt
+IntegerColumn = IntegerDescriptor = Integer
+BigIntColumn = BigIntDescriptor = BigInt
+SmallSerialColumn = SmallSerialDescriptor = SmallSerial
+SerialColumn = SerialDescriptor = Serial
+BigSerialColumn = BigSerialDescriptor = BigSerial
+RealColumn = RealDescriptor = Real
+DoublePrecisionColumn = DoublePrecisionDescriptor = DoublePrecision
+NumericColumn = NumericDescriptor = Numeric
+DecimalColumn = DecimalDescriptor = Numeric

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pgstorm
-Version: 0.1.4
+Version: 0.1.5
 Summary: A lightweight PostgreSQL query builder and mini-ORM for Python
 Author: pgstorm contributors
 License: MIT

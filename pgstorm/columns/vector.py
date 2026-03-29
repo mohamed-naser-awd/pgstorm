@@ -4,12 +4,12 @@ Requires the pgvector extension: CREATE EXTENSION vector;
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Optional
 
-from pgstorm.columns.base import Column, ColumnDescriptor
+from pgstorm.columns.base import ScalarField
 
 
-class VectorColumn(Column):
+class Vector(ScalarField):
     """pgvector vector(n) - 32-bit float vector with n dimensions."""
 
     def __init__(
@@ -23,26 +23,7 @@ class VectorColumn(Column):
         self.dimensions = dimensions
 
 
-class VectorDescriptor(ColumnDescriptor):
-    column_class = VectorColumn
-
-    def __init__(self, dimensions: Optional[int] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._dimensions = dimensions
-
-    def _make_column(self) -> Column:
-        return VectorColumn(
-            dimensions=self._dimensions,
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-class HalfVecColumn(Column):
+class HalfVec(ScalarField):
     """pgvector halfvec(n) - 16-bit float vector with n dimensions."""
 
     def __init__(
@@ -56,47 +37,14 @@ class HalfVecColumn(Column):
         self.dimensions = dimensions
 
 
-class HalfVecDescriptor(ColumnDescriptor):
-    column_class = HalfVecColumn
-
-    def __init__(self, dimensions: Optional[int] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._dimensions = dimensions
-
-    def _make_column(self) -> Column:
-        return HalfVecColumn(
-            dimensions=self._dimensions,
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-class SparseVecColumn(Column):
+class SparseVec(ScalarField):
     """pgvector sparsevec - sparse vector (non-zero elements)."""
 
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="SPARSEVEC", python_type=dict, **kwargs)
 
 
-class SparseVecDescriptor(ColumnDescriptor):
-    column_class = SparseVecColumn
-
-    def _make_column(self) -> Column:
-        return SparseVecColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
-
-
-class VectorBitColumn(Column):
+class VectorBit(ScalarField):
     """pgvector bit(n) - binary vector for binary quantization (pgvector extension)."""
 
     def __init__(
@@ -105,26 +53,12 @@ class VectorBitColumn(Column):
         dimensions: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
-        # pgvector bit type: bit(n) with n dimensions (up to 64000)
         pg_type = f"BIT({dimensions})" if dimensions is not None else "BIT"
         super().__init__(name=name, pg_type=pg_type, python_type=list, **kwargs)
         self.dimensions = dimensions
 
 
-class VectorBitDescriptor(ColumnDescriptor):
-    column_class = VectorBitColumn
-
-    def __init__(self, dimensions: Optional[int] = None, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._dimensions = dimensions
-
-    def _make_column(self) -> Column:
-        return VectorBitColumn(
-            dimensions=self._dimensions,
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
+VectorColumn = VectorDescriptor = Vector
+HalfVecColumn = HalfVecDescriptor = HalfVec
+SparseVecColumn = SparseVecDescriptor = SparseVec
+VectorBitColumn = VectorBitDescriptor = VectorBit

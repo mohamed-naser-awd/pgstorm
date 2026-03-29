@@ -51,6 +51,8 @@ class BaseModel(metaclass=ModelMeta):
 
     objects: ClassVar[QuerySet[Self]]
     fields: ClassVar[dict[str, Field]]
+    #: When True, SQL targets a PostgreSQL TEMPORARY table: never schema-qualified (pg_temp).
+    __temporary__: ClassVar[bool] = False
 
     def __init__(self, **kwargs: Any) -> None:
         """Accept keyword args for Model.objects.create(**kwargs) and manual instantiation."""
@@ -291,3 +293,15 @@ class BaseModel(metaclass=ModelMeta):
         if obj is None:
             return self  # type: ignore[return-value]
         return obj  # type: ignore[return-value]
+
+
+class BaseTempModel(BaseModel):
+    """
+    Base for models that map to a PostgreSQL ``TEMPORARY`` table on the current session.
+
+    Use :func:`pgstorm.compile_create_temp_table` (or ``engine.execute`` on its result) to create
+    the table, then query with ``Model.objects`` as usual. Temporary
+    tables are never schema-qualified in generated SQL so they resolve correctly in ``pg_temp``.
+    """
+
+    __temporary__: ClassVar[bool] = True

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pgstorm"
-version = "0.1.4"
+version = "0.1.5"
 description = "A lightweight PostgreSQL query builder and mini-ORM for Python"
 readme = "README.md"
 license = { text = "MIT" }

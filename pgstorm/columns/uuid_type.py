@@ -4,10 +4,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from pgstorm.columns.base import Column, ColumnDescriptor
+from pgstorm.columns.base import ScalarField
 
 
-class UUIDColumn(Column):
+class UUID(ScalarField):
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="UUID", python_type=uuid.UUID, **kwargs)
 
@@ -27,15 +27,4 @@ class UUIDColumn(Column):
         return self._expr(op.NE, rhs)
 
 
-class UUIDDescriptor(ColumnDescriptor):
-    column_class = UUIDColumn
-
-    def _make_column(self) -> Column:
-        return UUIDColumn(
-            default=self._default,
-            nullable=self._nullable,
-            primary_key=self._primary_key,
-            unique=self._unique,
-            index=self._index,
-            **self._kwargs,
-        )
+UUIDColumn = UUIDDescriptor = UUID

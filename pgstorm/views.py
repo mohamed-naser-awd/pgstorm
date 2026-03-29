@@ -1,12 +1,14 @@
 """
-Temporary tables and pre-defined querysets.
+Subquery/CTE views and pre-defined querysets (not PostgreSQL TEMPORARY tables).
 
-These are table-like classes that define their data via a queryset or raw SQL,
-instead of mapping to a physical table. They can inherit from another table
-to reuse column definitions.
+For session-scoped ``CREATE TEMPORARY TABLE`` + ORM mapping, use :class:`pgstorm.models.BaseTempModel`
+and :func:`pgstorm.compile_create_temp_table`.
 
-Use __queryset__ for a QuerySet, or __query__ for raw SQL.
-Use __is_cte__ = True to emit the query as a CTE when used.
+These classes define their data via a queryset or raw SQL instead of a physical table.
+They can inherit from another model to reuse column definitions.
+
+Use ``__queryset__`` for a QuerySet, or ``__query__`` for raw SQL.
+Use ``__is_cte__ = True`` to emit the query as a ``WITH`` CTE when used.
 """
 
 from __future__ import annotations
@@ -21,10 +23,10 @@ if TYPE_CHECKING:
 
 class BaseView(BaseModel):
     """
-    Base for temporary tables and pre-defined querysets.
+    Base for CTE/subquery-backed querysets (see module docstring).
 
-    Like a table definition but the data comes from a queryset or raw SQL instead
-    of a physical table. Can inherit from another table to reuse columns.
+    The data comes from a queryset or raw SQL instead of a physical table.
+    Can inherit from another model to reuse columns.
 
     Define one of:
       - __queryset__: QuerySet or callable returning QuerySet (e.g. User.objects.filter(...))
