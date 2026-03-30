@@ -5,7 +5,7 @@ A lightweight PostgreSQL query builder and mini-ORM for Python. Compose type-saf
 ## Features
 
 - **Type-safe models** — Define models with type annotations; `__table__` or `__tablename__` for table names
-- **`pgstorm.schema`** — `BaseModel` plus the full set of PostgreSQL scalar column classes in one import (no legacy `*Descriptor` / `*Column` aliases)
+- **`pgstorm.schema`** — `BaseModel`, scalar column types, and the same relation / annotation helpers as `pgstorm.types` (`Annotated`, `ForeignKey`, `ON_DELETE_*`, `FK_FIELD`, `Self`, …), in one import
 - **Rich QuerySet API** — `filter`, `exclude`, `order_by`, `limit`, `offset`, `join`, `aggregate`, `annotate`, `alias`
 - **Q objects** — Combine conditions with `|` (OR), `&` (AND), `~` (NOT)
 - **Subqueries** — `Subquery` and `OuterRef` for correlated subqueries
@@ -183,29 +183,30 @@ Use `__table__` or `__tablename__` to set the table name; otherwise the class na
 
 - **Scalars (convenience API)**: `types.Integer`, `types.String`, `types.BigSerial`, `types.Jsonb`, `types.Inet`, `types.Varchar(20)`, `types.TimestampTZ(default=...)`
 - **Scalars + model base (full catalog)**: `from pgstorm import schema` gives `schema.BaseModel` and every PostgreSQL column class (`schema.UUID`, `schema.Text`, `schema.Numeric`, `schema.Vector`, geometric types, `schema.JsonPythonType`, `schema.Column`, `schema.ScalarField`, etc.). Same types as `pgstorm.columns`, but only canonical names (no `*Descriptor` / `*Column` aliases).
-- **Relations**: `types.ForeignKey[User]`, `types.OneToOne`, `types.ManyToMany`
-- **Relation metadata**: `types.ON_DELETE_CASCADE`, `types.FK_FIELD("email")`, `types.FK_COLUMN("user_email")`, `types.ReverseName("profiles")`
+- **Relations & annotation helpers**: Either `pgstorm.types` or `pgstorm.schema` — same symbols (`schema.ForeignKey`, `schema.Annotated`, `schema.ON_DELETE_CASCADE`, `schema.FK_FIELD`, `schema.Self`, `schema.String`, `schema.Varchar(20)`, …). `schema` also exposes ref types `FKFieldRef`, `FKColumnRef`, `ReverseNameRef` for advanced use.
+- **Relations (concise)**: `ForeignKey[User]`, `OneToOne`, `ManyToMany`
+- **Relation metadata**: `ON_DELETE_CASCADE`, `FK_FIELD("email")`, `FK_COLUMN("user_email")`, `ReverseName("profiles")`
 
 ```python
-user: types.ForeignKey[User, types.ON_DELETE_CASCADE, types.FK_FIELD("email")]
+user: schema.ForeignKey[User, schema.ON_DELETE_CASCADE, schema.FK_FIELD("email")]
 ```
 
-Self-referential relations: `reply_to: types.ForeignKey[types.Self]`.
+Self-referential relations: `reply_to: schema.ForeignKey[schema.Self]` (or `types.Self` / `types.ForeignKey` — same objects).
 
 ### `pgstorm.schema` (models + column types)
 
-Use one import for table definitions: `schema.BaseModel` and all scalar column classes. For relations and bracket metadata such as `IS_PRIMARY_KEY_FIELD`, still use `pgstorm.types`.
+Use one import for table definitions: `schema.BaseModel`, `schema.IS_PRIMARY_KEY_FIELD`, all scalar column classes, and relation / annotation helpers (`schema.ForeignKey`, `schema.Annotated`, `schema.ON_DELETE_*`, … — aligned with `pgstorm.types`).
 
 ```python
 from pgstorm import schema
 
 class Appointment(schema.BaseModel):
     __tablename__ = "appointments"
-    id: schema.UUID(primary_key=True)
+    id: schema.UUID[schema.IS_PRIMARY_KEY_FIELD]
     note: schema.Text
 ```
 
-`schema.Numeric` is the decimal type (maps to `NUMERIC` in PostgreSQL).
+Use bracket metadata `Field[IS_PRIMARY_KEY_FIELD]` on any scalar column class (e.g. `schema.Text[schema.IS_PRIMARY_KEY_FIELD]`), or `primary_key=True` in the constructor when using call-style annotations. `schema.Numeric` is the decimal type (maps to `NUMERIC` in PostgreSQL).
 
 ## Engine & Execution
 

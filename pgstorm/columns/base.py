@@ -7,6 +7,7 @@ Field.generate_descriptor(annotation) turns an annotation into a field instance.
 from __future__ import annotations
 
 import copy
+from types import GenericAlias
 from typing import Annotated as TypingAnnotated, Any, Callable, Generic, Optional, overload, Type, TypeVar, TypeVarTuple, get_origin, get_args
 
 T = TypeVar("T")
@@ -520,7 +521,18 @@ class ScalarField(Field, Column):
     """
     Scalar model field: one class is both the Column (DDL, comparisons, expressions) and the
     descriptor for instance attributes. Subclass this for each PostgreSQL scalar type.
+
+    Bracket syntax is supported for primary-key metadata only, e.g.
+    ``UUID[IS_PRIMARY_KEY_FIELD]`` (same sentinel as ``types.IS_PRIMARY_KEY_FIELD``).
     """
+
+    def __class_getitem__(cls, item: Any) -> GenericAlias:
+        params = item if isinstance(item, tuple) else (item,)
+        if not params or not any(p is IS_PRIMARY_KEY_FIELD for p in params):
+            raise TypeError(
+                f"{cls.__name__}[...] only supports IS_PRIMARY_KEY_FIELD as bracket metadata; got {item!r}"
+            )
+        return GenericAlias(cls, params)
 
     def __init__(
         self,

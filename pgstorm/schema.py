@@ -1,20 +1,45 @@
 """
-Models and PostgreSQL column types for table definitions.
+Models, PostgreSQL column types, and annotation helpers for table definitions.
 
-Re-exports :class:`~pgstorm.models.BaseModel` so a single ``import pgstorm.schema as schema``
-(or ``from pgstorm import schema``) is enough for scalar columns and model base class.
+A single ``from pgstorm import schema`` (or ``import pgstorm.schema as schema``) covers:
 
-Also exports scalar column classes (:class:`~pgstorm.columns.base.ScalarField` subclasses) and
-:class:`~pgstorm.columns.base.Column` under canonical names only (no legacy ``*Descriptor`` /
-``*Column`` aliases).
-
-Relation fields (``ForeignKey``, etc.) and ``types`` conveniences still come from
-``pgstorm.types`` or ``pgstorm.columns.base``.
+- :class:`~pgstorm.models.BaseModel`
+- Scalar column classes (canonical names only)
+- ``typing.Annotated`` and bracket metadata (:data:`IS_PRIMARY_KEY_FIELD`)
+- Relation types and metadata (``ForeignKey``, ``ON_DELETE_*``, ``FK_FIELD``, ``Self``, …) —
+  same objects as :mod:`pgstorm.types`
 """
 from __future__ import annotations
 
+from typing import Annotated
+
+from pgstorm.types import (
+    Field,
+    ForeignKey,
+    ManyToMany,
+    OneToOne,
+    Self,
+    String,
+    Varchar,
+    FK_FIELD,
+    FK_COLUMN,
+    ReverseName,
+    ReverseNameRef,
+    ON_DELETE,
+    ON_DELETE_RESTRICT,
+    ON_DELETE_CASCADE,
+    ON_DELETE_SET_NULL,
+    ON_DELETE_NO_ACTION,
+)
+
 from pgstorm.models import BaseModel
-from pgstorm.columns.base import Column, ScalarField
+from pgstorm.columns.base import (
+    Column,
+    FKColumnRef,
+    FKFieldRef,
+    IS_PRIMARY_KEY_FIELD,
+    ScalarField,
+)
 
 from pgstorm.columns.numeric import (
     BigInt,
@@ -27,7 +52,7 @@ from pgstorm.columns.numeric import (
     SmallInt,
     SmallSerial,
 )
-from pgstorm.columns.character import BPChar, Char, Text, Varchar
+from pgstorm.columns.character import BPChar, Char, Text
 from pgstorm.columns.binary import Bytea
 from pgstorm.columns.boolean import Boolean
 from pgstorm.columns.datetime import (
@@ -50,66 +75,75 @@ from pgstorm.columns.snapshot import PgLsn, PgSnapshot, TxidSnapshot
 from pgstorm.columns.vector import HalfVec, SparseVec, Vector, VectorBit
 
 __all__ = [
+    "Annotated",
     "BaseModel",
-    "Column",
-    "ScalarField",
-    # Numeric
-    "SmallInt",
-    "Integer",
-    "BigInt",
-    "SmallSerial",
-    "Serial",
-    "BigSerial",
-    "Real",
-    "DoublePrecision",
-    "Numeric",
-    # Character & binary
-    "Text",
-    "Char",
-    "Varchar",
     "BPChar",
-    "Bytea",
+    "BigInt",
+    "BigSerial",
+    "Bit",
     "Boolean",
-    # Date/time
+    "Box",
+    "Bytea",
+    "Char",
+    "Circle",
+    "Cidr",
+    "Column",
     "Date",
+    "DoublePrecision",
+    "FKColumnRef",
+    "FK_FIELD",
+    "FK_COLUMN",
+    "FKFieldRef",
+    "Field",
+    "ForeignKey",
+    "HalfVec",
+    "IS_PRIMARY_KEY_FIELD",
+    "Inet",
+    "Integer",
+    "Interval",
+    "Json",
+    "JsonPythonType",
+    "Jsonb",
+    "Line",
+    "Lseg",
+    "MacAddr",
+    "MacAddr8",
+    "ManyToMany",
+    "Money",
+    "Numeric",
+    "ON_DELETE",
+    "ON_DELETE_CASCADE",
+    "ON_DELETE_NO_ACTION",
+    "ON_DELETE_RESTRICT",
+    "ON_DELETE_SET_NULL",
+    "OneToOne",
+    "Path",
+    "PgLsn",
+    "PgSnapshot",
+    "Point",
+    "Polygon",
+    "Real",
+    "ReverseName",
+    "ReverseNameRef",
+    "ScalarField",
+    "Self",
+    "Serial",
+    "SmallInt",
+    "SmallSerial",
+    "SparseVec",
+    "String",
+    "Text",
     "Time",
     "TimeTZ",
     "Timestamp",
     "TimestampTZ",
-    "Interval",
-    # Network
-    "Inet",
-    "Cidr",
-    "MacAddr",
-    "MacAddr8",
-    # Bit
-    "Bit",
-    "VarBit",
-    "Money",
-    # JSON
-    "Json",
-    "Jsonb",
-    "JsonPythonType",
-    "UUID",
-    "Xml",
-    # Geometric
-    "Point",
-    "Line",
-    "Lseg",
-    "Box",
-    "Path",
-    "Polygon",
-    "Circle",
-    # Full text
-    "TsVector",
     "TsQuery",
-    # Snapshot / LSN
-    "PgLsn",
-    "PgSnapshot",
+    "TsVector",
     "TxidSnapshot",
-    # pgvector
+    "UUID",
+    "VarBit",
+    "Varchar",
     "Vector",
-    "HalfVec",
-    "SparseVec",
     "VectorBit",
+    "Xml",
 ]

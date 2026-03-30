@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Generic, Optional
+from typing import Any, Optional
 
-from pgstorm.columns.base import ScalarField, ScalarMeta
+from pgstorm.columns.base import ScalarField
 
 
 class _ComparableLookupsMixin:
@@ -49,8 +49,8 @@ class SmallInt(_ComparableLookupsMixin, ScalarField):
         super().__init__(name=name, pg_type="SMALLINT", python_type=int, **kwargs)
 
 
-class Integer(_ComparableLookupsMixin, ScalarField, Generic[*ScalarMeta]):
-    """Supports types.Integer[types.IS_PRIMARY_KEY_FIELD] for primary key fields."""
+class Integer(_ComparableLookupsMixin, ScalarField):
+    """Supports Integer[IS_PRIMARY_KEY_FIELD] for primary key fields."""
 
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="INTEGER", python_type=int, **kwargs)
@@ -71,8 +71,8 @@ class Serial(_ComparableLookupsMixin, ScalarField):
         super().__init__(name=name, pg_type="SERIAL", python_type=int, **kwargs)
 
 
-class BigSerial(_ComparableLookupsMixin, ScalarField, Generic[*ScalarMeta]):
-    """Supports types.BigSerial[types.IS_PRIMARY_KEY_FIELD] for primary key fields."""
+class BigSerial(_ComparableLookupsMixin, ScalarField):
+    """Supports BigSerial[IS_PRIMARY_KEY_FIELD] for primary key fields."""
 
     def __init__(self, name: str = "", **kwargs: Any) -> None:
         super().__init__(name=name, pg_type="BIGSERIAL", python_type=int, **kwargs)
