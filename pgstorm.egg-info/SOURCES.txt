@@ -5,6 +5,7 @@ pgstorm/models.py
 pgstorm/observers.py
 pgstorm/operator.py
 pgstorm/prefetch.py
+pgstorm/schema.py
 pgstorm/types.py
 pgstorm/views.py
 pgstorm.egg-info/PKG-INFO

@@ -27,6 +27,8 @@ from pgstorm.functions.func import (
 )
 from pgstorm.engine import engine, create_engine, transaction, set_search_path
 
+from . import schema
+
 def query(model: type[BaseModel]):
     """Return Model.objects for the given model. Alias for model.objects."""
     return model.objects
@@ -77,4 +79,5 @@ __all__ = [
     "create_engine",
     "transaction",
     "set_search_path",
+    "schema",
 ]

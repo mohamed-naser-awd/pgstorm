@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pgstorm
-Version: 0.1.5
+Version: 0.1.6
 Summary: A lightweight PostgreSQL query builder and mini-ORM for Python
 Author: pgstorm contributors
 License: MIT
@@ -41,6 +41,7 @@ A lightweight PostgreSQL query builder and mini-ORM for Python. Compose type-saf
 ## Features
 
 - **Type-safe models** — Define models with type annotations; `__table__` or `__tablename__` for table names
+- **`pgstorm.schema`** — `BaseModel` plus the full set of PostgreSQL scalar column classes in one import (no legacy `*Descriptor` / `*Column` aliases)
 - **Rich QuerySet API** — `filter`, `exclude`, `order_by`, `limit`, `offset`, `join`, `aggregate`, `annotate`, `alias`
 - **Q objects** — Combine conditions with `|` (OR), `&` (AND), `~` (NOT)
 - **Subqueries** — `Subquery` and `OuterRef` for correlated subqueries
@@ -216,7 +217,8 @@ Use `__table__` or `__tablename__` to set the table name; otherwise the class na
 
 ### Types
 
-- **Scalars**: `types.Integer`, `types.String`, `types.BigSerial`, `types.Jsonb`, `types.Inet`, `types.Varchar(20)`, `types.TimestampTZ(default=...)`
+- **Scalars (convenience API)**: `types.Integer`, `types.String`, `types.BigSerial`, `types.Jsonb`, `types.Inet`, `types.Varchar(20)`, `types.TimestampTZ(default=...)`
+- **Scalars + model base (full catalog)**: `from pgstorm import schema` gives `schema.BaseModel` and every PostgreSQL column class (`schema.UUID`, `schema.Text`, `schema.Numeric`, `schema.Vector`, geometric types, `schema.JsonPythonType`, `schema.Column`, `schema.ScalarField`, etc.). Same types as `pgstorm.columns`, but only canonical names (no `*Descriptor` / `*Column` aliases).
 - **Relations**: `types.ForeignKey[User]`, `types.OneToOne`, `types.ManyToMany`
 - **Relation metadata**: `types.ON_DELETE_CASCADE`, `types.FK_FIELD("email")`, `types.FK_COLUMN("user_email")`, `types.ReverseName("profiles")`
 
@@ -225,6 +227,21 @@ user: types.ForeignKey[User, types.ON_DELETE_CASCADE, types.FK_FIELD("email")]
 ```
 
 Self-referential relations: `reply_to: types.ForeignKey[types.Self]`.
+
+### `pgstorm.schema` (models + column types)
+
+Use one import for table definitions: `schema.BaseModel` and all scalar column classes. For relations and bracket metadata such as `IS_PRIMARY_KEY_FIELD`, still use `pgstorm.types`.
+
+```python
+from pgstorm import schema
+
+class Appointment(schema.BaseModel):
+    __tablename__ = "appointments"
+    id: schema.UUID(primary_key=True)
+    note: schema.Text
+```
+
+`schema.Numeric` is the decimal type (maps to `NUMERIC` in PostgreSQL).
 
 ## Engine & Execution
 
