@@ -3,3 +3,5 @@ venv
 .cursor
 .ignore
 dist
+pgstorm.egg-info
+build
